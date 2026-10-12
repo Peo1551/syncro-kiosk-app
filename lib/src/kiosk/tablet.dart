@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import '../config/app_config.dart';
+
 /// What the server says about this tablet (pair and heartbeat responses).
 class TabletInfo {
   const TabletInfo({
@@ -8,7 +10,7 @@ class TabletInfo {
     this.companyName = '',
     this.siteId,
     this.siteName = '',
-    this.idleSeconds = 60,
+    this.idleSeconds = AppConfig.defaultIdleSeconds,
     this.adminPinSet = false,
     this.serverTimeUtc,
   });
@@ -25,14 +27,14 @@ class TabletInfo {
   factory TabletInfo.fromJson(Object? raw) {
     final json = raw is Map ? raw.cast<String, dynamic>() : <String, dynamic>{};
     int? toInt(Object? v) => v is num ? v.toInt() : int.tryParse('${v ?? ''}');
-    final idle = toInt(json['idle_seconds']) ?? 60;
+    final idle = toInt(json['idle_seconds']) ?? AppConfig.defaultIdleSeconds;
     return TabletInfo(
       kioskTabletId: toInt(json['kiosk_tablet_id']) ?? 0,
       tabletName: (json['tablet_name'] ?? '').toString(),
       companyName: (json['company_name'] ?? '').toString(),
       siteId: toInt(json['site_id']),
       siteName: (json['site_name'] ?? '').toString(),
-      idleSeconds: idle > 0 ? idle : 60,
+      idleSeconds: idle > 0 ? idle : AppConfig.defaultIdleSeconds,
       adminPinSet:
           json['admin_pin_set'] == true || '${json['admin_pin_set']}' == '1',
       serverTimeUtc: DateTime.tryParse(

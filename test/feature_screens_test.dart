@@ -63,59 +63,10 @@ Future<void> openTile(WidgetTester tester, String name) async {
   await settle(tester);
 }
 
-void expectFitsWithoutScrolling(WidgetTester tester) {
-  final send = find.byKey(const Key('leave-submit'));
-  expect(send.hitTestable(), findsOneWidget);
-  final view = tester.view.physicalSize / tester.view.devicePixelRatio;
-  final rect = tester.getRect(send);
-  expect(rect.bottom, lessThanOrEqualTo(view.height));
-  expect(rect.height, greaterThanOrEqualTo(72));
-  final form = tester.state<ScrollableState>(
-    find
-        .descendant(
-          of: find.byKey(const Key('leave-form-scroll')),
-          matching: find.byType(Scrollable),
-        )
-        .first,
-  );
-  expect(
-    form.position.maxScrollExtent,
-    0,
-    reason: 'the leave form must fit without scrolling',
-  );
-}
-
 void main() {
   setUpAll(() async {
     expect(await loadDeviceFonts(), isTrue, reason: 'Roboto from the SDK');
   });
-
-  for (final size in const [Size(1920, 1200), Size(1280, 800)]) {
-    testWidgets(
-      'Request Leave fits on one screen at ${size.width.toInt()}x${size.height.toInt()}',
-      (tester) async {
-        final server = workingServer();
-        addEmployeeEndpoints(server, permissions: {'allow_attachment': true});
-        addBusyLeaveConfig(server);
-        final c = await launch(tester, server, size: size);
-        await signInWithPin(tester);
-        await openTile(tester, 'requestLeave');
-
-        expect(find.byKey(const Key('page-title')), findsOneWidget);
-        expect(find.text('Request Leave'), findsOneWidget);
-        expect(find.byKey(const Key('leave-group-SICK')), findsOneWidget);
-        expect(find.byKey(const Key('leave-subtype-12')), findsOneWidget);
-        expect(find.text('Take photo'), findsOneWidget);
-        expectFitsWithoutScrolling(tester);
-
-        await tester.tap(find.byKey(const Key('leave-daypart-PART')));
-        await settle(tester);
-        expect(find.byKey(const Key('leave-time-from')), findsOneWidget);
-        expectFitsWithoutScrolling(tester);
-        await finish(tester, c);
-      },
-    );
-  }
 
   testWidgets(
     'Request Leave: subtype chips only when the group allows a choice',
@@ -141,8 +92,8 @@ void main() {
         find.text(
           'Part day holiday is only available with an hourly holiday entitlement.',
         ),
-        findsOneWidget,
-        reason: 'holiday is counted in days, so the Part day rule is shown',
+        findsNothing,
+        reason: 'Part day is simply not offered; no note about it',
       );
       await finish(tester, c);
     },

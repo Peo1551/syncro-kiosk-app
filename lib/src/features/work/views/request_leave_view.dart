@@ -38,42 +38,64 @@ extension _RequestLeaveView on EmployeeWorkspaceState {
     final useTimeRange = _usesTimeRangeForSelection(group);
     final dayPartOptions = _dayPartOptionsForGroup(group);
     final selectedDayPart = _selectedDayPartForGroup(group);
-    final partDayEligibility = _partDayEligibilityForGroup(group);
-    final showPartDayRule =
-        !partDayEligibility.allowed &&
-        partDayEligibility.reason != 'daily_entitlement_mode' &&
-        group?.groupRef.trim().toUpperCase() == 'HOL';
     final attachmentRequired = _isAttachmentRequiredForSelection();
     final showAttachment = _attachmentsAllowed || attachmentRequired;
     final busy = _leaveSubmitting;
 
-    Widget formRow(String label, Widget control) {
+    Widget section(String label, Widget control) {
       return Padding(
-        padding: const EdgeInsets.only(bottom: 20),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            SizedBox(
-              width: 128,
-              child: Padding(
-                padding: const EdgeInsets.only(top: 16),
-                child: Text(label, style: kKioskLabel.copyWith(fontSize: 17)),
-              ),
-            ),
-            Expanded(child: control),
-          ],
+        padding: const EdgeInsets.only(bottom: 12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [KioskLabel(label), control],
         ),
       );
     }
 
+    // Part day is one date with a start and end time, so the To date gives
+    // way to the two time buttons and the whole row stays on one line.
+    final dateButtons = <Widget>[
+      BigDateButton(
+        key: const Key('leave-date-from'),
+        label: useTimeRange ? 'Date' : 'From',
+        value: _leaveDateFrom == null ? null : kioskDate(_leaveDateFrom!),
+        onTap: busy ? null : () => _pickLeaveDate(pageContext, from: true),
+      ),
+      if (!useTimeRange)
+        BigDateButton(
+          key: const Key('leave-date-to'),
+          label: 'To',
+          value: _leaveDateTo == null ? null : kioskDate(_leaveDateTo!),
+          onTap: busy ? null : () => _pickLeaveDate(pageContext, from: false),
+        )
+      else ...[
+        BigDateButton(
+          key: const Key('leave-time-from'),
+          label: 'Start time',
+          placeholder: 'Choose time',
+          icon: Icons.schedule_rounded,
+          value: _leaveTimeFrom == null ? null : _fmtTime(_leaveTimeFrom!),
+          onTap: busy ? null : () => _pickLeaveTime(pageContext, from: true),
+        ),
+        BigDateButton(
+          key: const Key('leave-time-to'),
+          label: 'End time',
+          placeholder: 'Choose time',
+          icon: Icons.schedule_rounded,
+          value: _leaveTimeTo == null ? null : _fmtTime(_leaveTimeTo!),
+          onTap: busy ? null : () => _pickLeaveTime(pageContext, from: false),
+        ),
+      ],
+    ];
+
     return KioskPanel(
-      padding: const EdgeInsets.fromLTRB(28, 22, 28, 2),
+      padding: const EdgeInsets.fromLTRB(24, 16, 24, 4),
       child: SingleChildScrollView(
         key: const Key('leave-form-scroll'),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            formRow(
+            section(
               'Leave type',
               KioskChoiceChips<String>(
                 key: const Key('leave-group'),
@@ -87,7 +109,7 @@ extension _RequestLeaveView on EmployeeWorkspaceState {
               ),
             ),
             if (showSubtypes)
-              formRow(
+              section(
                 'Subtype',
                 KioskChoiceChips<int>(
                   key: const Key('leave-subtype'),
@@ -103,109 +125,39 @@ extension _RequestLeaveView on EmployeeWorkspaceState {
                   }),
                 ),
               ),
-            formRow(
-              'Dates',
+            section(
+              'Day part',
+              KioskChoiceChips<String>(
+                key: const Key('leave-daypart'),
+                options: dayPartOptions,
+                labelOf: _dayPartLabel,
+                selected: selectedDayPart,
+                enabled: !busy,
+                keyOf: (value) => Key('leave-daypart-$value'),
+                onSelected: (value) => _set(() {
+                  _selectedDayPart = value;
+                  if (value == 'PART') {
+                    _leaveDateTo = _leaveDateFrom;
+                  } else {
+                    _leaveTimeFrom = null;
+                    _leaveTimeTo = null;
+                  }
+                  _leaveError = null;
+                }),
+              ),
+            ),
+            section(
+              useTimeRange ? 'Date and time' : 'Dates',
               Row(
                 children: [
-                  Expanded(
-                    child: BigDateButton(
-                      key: const Key('leave-date-from'),
-                      label: 'From',
-                      value: _leaveDateFrom == null
-                          ? null
-                          : kioskDate(_leaveDateFrom!),
-                      onTap: busy
-                          ? null
-                          : () => _pickLeaveDate(pageContext, from: true),
-                    ),
-                  ),
-                  const SizedBox(width: 14),
-                  Expanded(
-                    child: BigDateButton(
-                      key: const Key('leave-date-to'),
-                      label: 'To',
-                      value: _leaveDateTo == null
-                          ? null
-                          : kioskDate(_leaveDateTo!),
-                      onTap: busy
-                          ? null
-                          : () => _pickLeaveDate(pageContext, from: false),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            formRow(
-              'Day part',
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  KioskChoiceChips<String>(
-                    key: const Key('leave-daypart'),
-                    options: dayPartOptions,
-                    labelOf: _dayPartLabel,
-                    selected: selectedDayPart,
-                    enabled: !busy,
-                    keyOf: (value) => Key('leave-daypart-$value'),
-                    onSelected: (value) => _set(() {
-                      _selectedDayPart = value;
-                      if (value != 'PART') {
-                        _leaveTimeFrom = null;
-                        _leaveTimeTo = null;
-                      }
-                      _leaveError = null;
-                    }),
-                  ),
-                  if (showPartDayRule) ...[
-                    const SizedBox(height: 8),
-                    Text(
-                      partDayEligibility.denialMessage,
-                      style: const TextStyle(fontSize: 16, color: kKioskMuted),
-                    ),
-                  ],
-                  if (useTimeRange) ...[
-                    const SizedBox(height: 12),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: BigDateButton(
-                            key: const Key('leave-time-from'),
-                            label: 'Start time',
-                            placeholder: 'Choose a time',
-                            icon: Icons.schedule_rounded,
-                            height: 68,
-                            value: _leaveTimeFrom == null
-                                ? null
-                                : _fmtTime(_leaveTimeFrom!),
-                            onTap: busy
-                                ? null
-                                : () => _pickLeaveTime(pageContext, from: true),
-                          ),
-                        ),
-                        const SizedBox(width: 14),
-                        Expanded(
-                          child: BigDateButton(
-                            key: const Key('leave-time-to'),
-                            label: 'End time',
-                            placeholder: 'Choose a time',
-                            icon: Icons.schedule_rounded,
-                            height: 68,
-                            value: _leaveTimeTo == null
-                                ? null
-                                : _fmtTime(_leaveTimeTo!),
-                            onTap: busy
-                                ? null
-                                : () =>
-                                      _pickLeaveTime(pageContext, from: false),
-                          ),
-                        ),
-                      ],
-                    ),
+                  for (var i = 0; i < dateButtons.length; i++) ...[
+                    if (i > 0) const SizedBox(width: 12),
+                    Expanded(child: dateButtons[i]),
                   ],
                 ],
               ),
             ),
-            formRow(
+            section(
               'Notes',
               Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -215,19 +167,23 @@ extension _RequestLeaveView on EmployeeWorkspaceState {
                       key: const Key('leave-notes'),
                       controller: _leaveNotesCtrl,
                       enabled: !busy,
-                      minLines: 3,
-                      maxLines: 3,
+                      minLines: 2,
+                      maxLines: 2,
                       style: kKioskBody,
                       decoration: const InputDecoration(
                         hintText: 'Anything your manager should know',
                         hintStyle: TextStyle(fontSize: 18, color: kKioskMuted),
+                        contentPadding: EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 12,
+                        ),
                       ),
                     ),
                   ),
                   if (showAttachment) ...[
-                    const SizedBox(width: 14),
+                    const SizedBox(width: 12),
                     SizedBox(
-                      width: 210,
+                      width: 220,
                       child: _attachmentControl(
                         pageContext,
                         required: attachmentRequired,
@@ -252,73 +208,80 @@ extension _RequestLeaveView on EmployeeWorkspaceState {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        SizedBox(
-          height: 60,
-          child: OutlinedButton.icon(
-            key: const Key('leave-photo'),
-            onPressed: busy
-                ? null
-                : () async {
-                    final picked = await _pickAttachment(pageContext);
-                    if (picked == null || !mounted) return;
-                    _set(() => _leaveAttachment = picked);
-                  },
-            style: OutlinedButton.styleFrom(
-              side: BorderSide(
-                color: required && attachment == null
-                    ? const Color(0xFFF5C36B)
-                    : kKioskLine,
-                width: 2,
-              ),
-              textStyle: const TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            icon: const Icon(Icons.photo_camera_outlined, size: 24),
-            label: Text(attachment == null ? 'Take photo' : 'Retake'),
-          ),
-        ),
-        const SizedBox(height: 6),
-        if (attachment != null)
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  attachment.fileName,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
+        Row(
+          children: [
+            Expanded(
+              child: SizedBox(
+                height: 56,
+                child: OutlinedButton.icon(
+                  key: const Key('leave-photo'),
+                  onPressed: busy
+                      ? null
+                      : () async {
+                          final picked = await _pickAttachment(pageContext);
+                          if (picked == null || !mounted) return;
+                          _set(() => _leaveAttachment = picked);
+                        },
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    side: BorderSide(
+                      color: required && attachment == null
+                          ? const Color(0xFFF5C36B)
+                          : kKioskLine,
+                      width: 2,
+                    ),
+                    textStyle: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
+                  icon: const Icon(Icons.photo_camera_outlined, size: 24),
+                  label: Text(attachment == null ? 'Take photo' : 'Retake'),
                 ),
               ),
+            ),
+            if (attachment != null) ...[
+              const SizedBox(width: 8),
               SizedBox(
-                width: 48,
-                height: 48,
-                child: IconButton(
+                width: 56,
+                height: 56,
+                child: OutlinedButton(
                   key: const Key('leave-photo-remove'),
-                  tooltip: 'Remove photo',
                   onPressed: busy
                       ? null
                       : () => _set(() => _leaveAttachment = null),
-                  icon: const Icon(Icons.close_rounded),
+                  style: OutlinedButton.styleFrom(
+                    padding: EdgeInsets.zero,
+                    side: const BorderSide(color: kKioskLine, width: 2),
+                  ),
+                  child: const Tooltip(
+                    message: 'Remove photo',
+                    child: Icon(Icons.close_rounded),
+                  ),
                 ),
               ),
             ],
-          )
-        else
-          Text(
-            required
-                ? 'A photo is required for this selection.'
-                : 'Photo optional (max 10MB).',
-            style: TextStyle(
-              fontSize: 16,
-              color: required ? kKioskAmberText : kKioskMuted,
-              fontWeight: required ? FontWeight.w700 : FontWeight.w500,
-            ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        Text(
+          attachment != null
+              ? 'Photo added'
+              : required
+              ? 'Photo required'
+              : 'Optional, max 10MB',
+          style: TextStyle(
+            fontSize: 16,
+            color: attachment != null
+                ? kKioskPositive
+                : required
+                ? kKioskAmberText
+                : kKioskMuted,
+            fontWeight: required || attachment != null
+                ? FontWeight.w700
+                : FontWeight.w500,
           ),
+        ),
       ],
     );
   }

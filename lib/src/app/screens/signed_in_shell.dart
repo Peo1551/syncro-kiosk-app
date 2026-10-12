@@ -109,16 +109,18 @@ class _SignedInShellState extends State<SignedInShell> {
   Widget build(BuildContext context) {
     return Scaffold(
       body: SafeArea(
-        child: Column(
-          children: [
-            _Header(
-              session: _session,
-              idle: widget.controller.idle,
-              onSignOut: _signOut,
-            ),
-            const Divider(height: 1),
-            Expanded(child: _body()),
-          ],
+        child: KioskFit(
+          child: Column(
+            children: [
+              _Header(
+                session: _session,
+                idle: widget.controller.idle,
+                onSignOut: _signOut,
+              ),
+              const Divider(height: 1),
+              Expanded(child: _body()),
+            ],
+          ),
         ),
       ),
     );
@@ -526,12 +528,7 @@ class _DayTile extends StatelessWidget {
             ),
           ),
           const Spacer(),
-          Text(
-            span,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontSize: 17, color: kKioskText),
-          ),
+          Text(span, style: const TextStyle(fontSize: 17, color: kKioskText)),
           const SizedBox(height: 6),
           FittedBox(
             fit: BoxFit.scaleDown,

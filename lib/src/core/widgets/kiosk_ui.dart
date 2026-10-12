@@ -69,7 +69,7 @@ class KioskSplit extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 20, 24, 20),
+      padding: const EdgeInsets.fromLTRB(24, 16, 24, 16),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -118,7 +118,7 @@ class KioskLabel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.only(bottom: 10),
+    padding: const EdgeInsets.only(bottom: 4),
     child: Text(text, style: kKioskLabel),
   );
 }
@@ -164,7 +164,12 @@ class KioskPrimaryButton extends StatelessWidget {
                     Icon(icon, size: 26),
                     const SizedBox(width: 10),
                   ],
-                  Flexible(child: Text(label, overflow: TextOverflow.ellipsis)),
+                  Flexible(
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Text(label, maxLines: 1),
+                    ),
+                  ),
                 ],
               ),
       ),
@@ -181,7 +186,10 @@ class KioskSecondaryButton extends StatelessWidget {
     this.busy = false,
     this.icon,
     this.danger = false,
+    this.height = 64,
   });
+
+  final double height;
 
   final String label;
   final VoidCallback? onPressed;
@@ -194,7 +202,7 @@ class KioskSecondaryButton extends StatelessWidget {
     final color = danger ? kKioskNegative : kKioskText;
     return SizedBox(
       width: double.infinity,
-      height: 64,
+      height: height,
       child: OutlinedButton(
         onPressed: busy ? null : onPressed,
         style: OutlinedButton.styleFrom(
@@ -221,7 +229,12 @@ class KioskSecondaryButton extends StatelessWidget {
                     Icon(icon, size: 24),
                     const SizedBox(width: 10),
                   ],
-                  Flexible(child: Text(label, overflow: TextOverflow.ellipsis)),
+                  Flexible(
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Text(label, maxLines: 1),
+                    ),
+                  ),
                 ],
               ),
       ),
@@ -292,8 +305,8 @@ class _KioskChip extends StatelessWidget {
           onTap: onTap,
           child: Container(
             height: 56,
-            constraints: const BoxConstraints(minWidth: 96),
-            padding: const EdgeInsets.symmetric(horizontal: 20),
+            constraints: const BoxConstraints(minWidth: 88),
+            padding: const EdgeInsets.symmetric(horizontal: 16),
             decoration: BoxDecoration(
               borderRadius: radius,
               border: Border.all(
@@ -305,13 +318,13 @@ class _KioskChip extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               children: [
                 if (selected) ...[
-                  const Icon(Icons.check_rounded, size: 20, color: kKioskInk),
-                  const SizedBox(width: 6),
+                  const Icon(Icons.check_rounded, size: 18, color: kKioskInk),
+                  const SizedBox(width: 4),
                 ],
                 Text(
                   label,
                   style: TextStyle(
-                    fontSize: 18,
+                    fontSize: 17,
                     fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
                     color: onTap == null && !selected ? kKioskMuted : kKioskInk,
                   ),
@@ -332,16 +345,18 @@ class BigDateButton extends StatelessWidget {
     required this.label,
     required this.value,
     required this.onTap,
-    this.placeholder = 'Choose a date',
+    this.placeholder = 'Choose date',
     this.icon = Icons.calendar_month_rounded,
-    this.height = 80,
+    this.height = 68,
   });
 
   final String label;
   final String? value;
   final VoidCallback? onTap;
   final String placeholder;
-  final IconData icon;
+
+  /// Null leaves the icon out where space is short.
+  final IconData? icon;
   final double height;
 
   @override
@@ -356,7 +371,7 @@ class BigDateButton extends StatelessWidget {
         onTap: onTap,
         child: Container(
           height: height,
-          padding: const EdgeInsets.symmetric(horizontal: 18),
+          padding: const EdgeInsets.symmetric(horizontal: 16),
           decoration: BoxDecoration(
             borderRadius: radius,
             border: Border.all(
@@ -366,23 +381,27 @@ class BigDateButton extends StatelessWidget {
           ),
           child: Row(
             children: [
-              Icon(icon, size: 28, color: kKioskInk),
-              const SizedBox(width: 14),
+              if (icon != null) ...[
+                Icon(icon, size: 26, color: kKioskInk),
+                const SizedBox(width: 12),
+              ],
               Expanded(
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(label, style: kKioskLabel),
-                    const SizedBox(height: 2),
-                    Text(
-                      hasValue ? value! : placeholder,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 21,
-                        fontWeight: FontWeight.w800,
-                        color: hasValue ? kKioskText : kKioskMuted,
+                    Text(label, style: kKioskLabel.copyWith(fontSize: 15)),
+                    FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        hasValue ? value! : placeholder,
+                        maxLines: 1,
+                        style: TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.w800,
+                          color: hasValue ? kKioskText : kKioskMuted,
+                        ),
                       ),
                     ),
                   ],
@@ -473,8 +492,7 @@ class StatusChip extends StatelessWidget {
       ),
       child: Text(
         label,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
+        textAlign: TextAlign.center,
         style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: fg),
       ),
     );
@@ -532,8 +550,6 @@ class StatCard extends StatelessWidget {
             const SizedBox(height: 4),
             Text(
               caption!,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
               style: const TextStyle(fontSize: 16, color: kKioskMuted),
             ),
           ],
@@ -561,7 +577,7 @@ class KioskSummaryLine extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 7),
+      padding: const EdgeInsets.symmetric(vertical: 5),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -623,7 +639,7 @@ class KioskTable extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final header = Container(
-      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
       decoration: const BoxDecoration(
         border: Border(bottom: BorderSide(color: kKioskLine)),
       ),
@@ -654,8 +670,8 @@ class KioskTable extends StatelessWidget {
       final selected = selectedRow == i;
       final cells = rows[i];
       final content = Container(
-        constraints: const BoxConstraints(minHeight: 64),
-        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+        constraints: const BoxConstraints(minHeight: 56),
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 5),
         decoration: BoxDecoration(
           color: selected
               ? kKioskGreenSoft
@@ -955,4 +971,55 @@ Future<DateTime?> showKioskDatePicker({
       child: child!,
     ),
   );
+}
+
+/// The signed-in screens are laid out for at least [designWidth] x
+/// [designHeight] dp. On a tablet whose logical screen is smaller (a 1920x1200
+/// panel at density 2.0 is 960x600 dp), the whole area is drawn at that size
+/// and scaled down to fit, so the layout and proportions stay the same and
+/// nothing wraps or gets cut off. On a large enough screen it does nothing.
+class KioskFit extends StatelessWidget {
+  const KioskFit({
+    super.key,
+    required this.child,
+    this.designWidth = 1280,
+    this.designHeight = 720,
+  });
+
+  final Widget child;
+  final double designWidth;
+  final double designHeight;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, box) {
+        if (!box.hasBoundedWidth || !box.hasBoundedHeight) return child;
+        final scale = [
+          1.0,
+          box.maxWidth / designWidth,
+          box.maxHeight / designHeight,
+        ].reduce((a, b) => a < b ? a : b);
+        if (scale >= 0.999) return child;
+        final size = Size(box.maxWidth / scale, box.maxHeight / scale);
+        final media = MediaQuery.of(context);
+        return FittedBox(
+          fit: BoxFit.fill,
+          alignment: Alignment.topLeft,
+          child: SizedBox.fromSize(
+            size: size,
+            child: MediaQuery(
+              data: media.copyWith(
+                size: size,
+                padding: EdgeInsets.zero,
+                viewPadding: EdgeInsets.zero,
+                viewInsets: media.viewInsets / scale,
+              ),
+              child: child,
+            ),
+          ),
+        );
+      },
+    );
+  }
 }

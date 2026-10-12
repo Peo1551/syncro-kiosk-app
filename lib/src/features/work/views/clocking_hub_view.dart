@@ -83,6 +83,7 @@ extension _ClockingHubView on EmployeeWorkspaceState {
             width: 150,
             child: KioskSecondaryButton(
               key: const Key('week-current'),
+              height: 56,
               label: 'This week',
               onPressed: _timesheetLoading
                   ? null
@@ -116,7 +117,7 @@ extension _ClockingHubView on EmployeeWorkspaceState {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Padding(
-                padding: const EdgeInsets.fromLTRB(18, 16, 18, 16),
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
                 child: weekBar,
               ),
               const Divider(height: 1),
@@ -139,7 +140,7 @@ extension _ClockingHubView on EmployeeWorkspaceState {
   }) {
     return SizedBox(
       width: 72,
-      height: 64,
+      height: 56,
       child: OutlinedButton(
         key: key,
         onPressed: onPressed,
@@ -183,8 +184,6 @@ extension _ClockingHubView on EmployeeWorkspaceState {
           if (notes.isNotEmpty)
             Text(
               notes.join(' · '),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
               style: TextStyle(
                 fontSize: 16,
                 fontWeight: FontWeight.w600,

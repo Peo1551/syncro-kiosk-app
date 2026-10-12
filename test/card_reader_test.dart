@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:syncro_kiosk/src/kiosk/card_reader.dart';
 import 'package:syncro_kiosk/src/kiosk/idle_countdown.dart';
+import 'package:syncro_kiosk/src/kiosk/tablet.dart';
 
 void main() {
   late DateTime now;
@@ -116,14 +117,22 @@ void main() {
     test('a zero or missing limit falls back to 60 seconds', () {
       final idle = IdleCountdown(onExpired: () {});
       idle.start(0);
-      expect(idle.remaining.value, 60);
+      expect(idle.remaining.value, 120);
       idle.dispose();
+    });
+
+    test('tablet and session default to two minutes', () {
+      expect(TabletInfo.fromJson(const {}).idleSeconds, 120);
+      expect(const TabletInfo().idleSeconds, 120);
     });
 
     test('pill format', () {
       expect(formatCountdown(59), '0:59');
       expect(formatCountdown(5), '0:05');
       expect(formatCountdown(90), '1:30');
+      expect(formatCountdown(120), '2:00');
+      expect(formatCountdown(119), '1:59');
+      expect(formatCountdown(180), '3:00');
       expect(formatCountdown(-3), '0:00');
     });
   });

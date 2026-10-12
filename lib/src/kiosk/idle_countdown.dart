@@ -2,8 +2,10 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 
+import '../config/app_config.dart';
+
 /// Counts down whole seconds from the idle limit; any touch calls [reset].
-/// [remaining] drives the "Signing out in 0:SS" pill.
+/// [remaining] drives the "Signing out in m:ss" pill.
 class IdleCountdown {
   IdleCountdown({required this.onExpired});
 
@@ -16,7 +18,7 @@ class IdleCountdown {
   int get limit => _limit;
 
   void start(int seconds) {
-    _limit = seconds > 0 ? seconds : 60;
+    _limit = seconds > 0 ? seconds : AppConfig.defaultIdleSeconds;
     reset();
   }
 

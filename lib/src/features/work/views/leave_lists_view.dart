@@ -111,8 +111,6 @@ extension _LeaveListsView on EmployeeWorkspaceState {
                   children: [
                     Text(
                       title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
                         fontSize: 19,
                         fontWeight: FontWeight.w800,
@@ -122,23 +120,13 @@ extension _LeaveListsView on EmployeeWorkspaceState {
                     const SizedBox(height: 4),
                     Text(
                       subtitle,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
                       style: const TextStyle(fontSize: 17, color: kKioskMuted),
                     ),
                   ],
                 ),
               ),
               const SizedBox(width: 12),
-              Expanded(
-                flex: 2,
-                child: Text(
-                  length,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: kKioskBodyStrong,
-                ),
-              ),
+              Expanded(flex: 2, child: Text(length, style: kKioskBodyStrong)),
               const SizedBox(width: 12),
               Flexible(
                 flex: 3,

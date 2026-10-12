@@ -100,7 +100,7 @@ void main() {
       expect(session.employeeId, 42);
       expect(session.fullName, 'Sam Taylor');
       expect(session.initials, 'ST');
-      expect(session.idleSeconds, 90);
+      expect(session.idleSeconds, 120);
       final req = server.requests.single;
       expect(jsonDecode(req.bodyText), {'card': '00A1B2'});
       expect(req.headers.containsKey('cookie'), isFalse);

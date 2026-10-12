@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/services.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:syncro_kiosk/src/app/kiosk_app.dart';
 import 'package:syncro_kiosk/src/app/kiosk_controller.dart';
@@ -23,9 +24,17 @@ Future<KioskController> launch(
   TabletStore? store,
   DateTime? today,
   Size size = const Size(1280, 800),
+  double devicePixelRatio = 1,
+  EdgeInsets systemBars = EdgeInsets.zero,
 }) async {
   tester.view.physicalSize = size;
-  tester.view.devicePixelRatio = 1;
+  tester.view.devicePixelRatio = devicePixelRatio;
+  final bars = FakeViewPadding(
+    top: systemBars.top * devicePixelRatio,
+    bottom: systemBars.bottom * devicePixelRatio,
+  );
+  tester.view.padding = bars;
+  tester.view.viewPadding = bars;
   addTearDown(tester.view.reset);
   final controller = KioskController(
     client: ApiClient(transport: server),
@@ -107,4 +116,75 @@ Future<bool> loadDeviceFonts() async {
     return true;
   }
   return false;
+}
+
+/// A real-device setup: a physical screen size, density and system bars.
+class DeviceSetup {
+  const DeviceSetup(this.name, this.size, this.devicePixelRatio, this.bars);
+  final String name;
+  final Size size;
+  final double devicePixelRatio;
+  final EdgeInsets bars;
+}
+
+/// The Tab 12 Pro panel (1920x1200 px) at the densities it can run at, with
+/// the status and navigation bars showing.
+const tabletSetups = [
+  DeviceSetup(
+    '1920x1200 px at 1.5x (1280x800 dp)',
+    Size(1920, 1200),
+    1.5,
+    EdgeInsets.only(top: 24, bottom: 48),
+  ),
+  DeviceSetup(
+    '1920x1200 px at 2.0x, bars hidden (960x600 dp)',
+    Size(1920, 1200),
+    2.0,
+    EdgeInsets.zero,
+  ),
+  DeviceSetup(
+    '1920x1200 px at 1.75x, larger display size (1097x686 dp)',
+    Size(1920, 1200),
+    1.75,
+    EdgeInsets.only(top: 24, bottom: 48),
+  ),
+  DeviceSetup('1920x1200 dp, no bars', Size(1920, 1200), 1.0, EdgeInsets.zero),
+];
+
+Future<KioskController> launchOn(
+  WidgetTester tester,
+  FakeServer server,
+  DeviceSetup device,
+) => launch(
+  tester,
+  server,
+  size: device.size,
+  devicePixelRatio: device.devicePixelRatio,
+  systemBars: device.bars,
+);
+
+/// No list, form or panel on screen has anything to scroll to.
+void expectNothingScrolls(WidgetTester tester, {String? where}) {
+  for (final element in find.byType(Scrollable).evaluate()) {
+    final state = (element as StatefulElement).state as ScrollableState;
+    expect(
+      state.position.maxScrollExtent,
+      lessThanOrEqualTo(0),
+      reason:
+          '${where ?? 'screen'}: ${element.widget.key ?? element.widget} scrolls',
+    );
+  }
+}
+
+/// No text on screen is cut short (ellipsis or max lines reached).
+void expectNothingTruncated(WidgetTester tester, {String? where}) {
+  for (final element in find.byType(RichText).evaluate()) {
+    final paragraph = element.renderObject! as RenderParagraph;
+    expect(
+      paragraph.didExceedMaxLines,
+      isFalse,
+      reason:
+          '${where ?? 'screen'}: "${paragraph.text.toPlainText()}" is cut off',
+    );
+  }
 }

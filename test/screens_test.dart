@@ -62,7 +62,8 @@ void main() {
     await signInWithPin(tester);
     expect(find.text('Sam Taylor'), findsOneWidget);
     expect(find.text('ST'), findsOneWidget);
-    expect(find.textContaining('Signing out in 1:'), findsOneWidget);
+    expect(c.idle.limit, 120);
+    expect(find.textContaining('Signing out in 1:5'), findsOneWidget);
     expect(find.byKey(const Key('tile-requestLeave')), findsOneWidget);
     expect(find.byKey(const Key('tile-requestHistory')), findsOneWidget);
     expect(find.byKey(const Key('tile-upcomingLeave')), findsOneWidget);
@@ -139,8 +140,23 @@ void main() {
         return ((box.decoration! as BoxDecoration).border! as Border).top.color;
       }
 
+      expect(c.idle.limit, 120);
+      await tester.pump(Duration(seconds: c.idle.remaining.value - 119));
+      await tester.pump();
+      expect(find.text('Signing out in 1:59'), findsOneWidget);
       expect(pillBorder(), isNot(const Color(0xFFF59E0B)));
-      await tester.pump(Duration(seconds: c.idle.remaining.value - 12));
+      await tester.pump(const Duration(seconds: 59));
+      await tester.pump();
+      expect(find.text('Signing out in 1:00'), findsOneWidget);
+      await tester.pump(const Duration(seconds: 44));
+      await tester.pump();
+      expect(find.text('Signing out in 0:16'), findsOneWidget);
+      expect(pillBorder(), isNot(const Color(0xFFF59E0B)));
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pump();
+      expect(find.text('Signing out in 0:15'), findsOneWidget);
+      expect(pillBorder(), const Color(0xFFF59E0B));
+      await tester.pump(const Duration(seconds: 3));
       await tester.pump();
       expect(find.text('Signing out in 0:12'), findsOneWidget);
       expect(pillBorder(), const Color(0xFFF59E0B));

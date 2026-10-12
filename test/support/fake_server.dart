@@ -75,7 +75,7 @@ FakeServer workingServer() {
         'first_name': 'Sam',
         'last_name': 'Taylor',
       },
-      'idle_seconds': 90,
+      'idle_seconds': 120,
     },
     headers: {
       'set-cookie': ['PHPSESSID=sess-1; path=/; HttpOnly; Secure'],

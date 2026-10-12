@@ -24,5 +24,5 @@ class AppConfig {
       '/employee/api/timesheet-approve.php';
 
   static const Duration heartbeatInterval = Duration(seconds: 60);
-  static const int defaultIdleSeconds = 60;
+  static const int defaultIdleSeconds = 120;
 }

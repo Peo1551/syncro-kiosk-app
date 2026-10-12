@@ -1,3 +1,5 @@
+import '../config/app_config.dart';
+
 /// The signed-in employee. Held in memory only and dropped at sign-out; it is
 /// never written to storage.
 class AppSession {
@@ -9,7 +11,7 @@ class AppSession {
     this.employeeFirstName = '',
     this.employeeLastName = '',
     this.employeeDisplayName = '',
-    this.idleSeconds = 60,
+    this.idleSeconds = AppConfig.defaultIdleSeconds,
   });
 
   final String cookieHeader;

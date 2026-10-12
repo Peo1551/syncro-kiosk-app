@@ -38,8 +38,8 @@ extension _EntitlementView on EmployeeWorkspaceState {
 
     Widget tableRow(String label, String value, {Color? color}) {
       return Container(
-        constraints: const BoxConstraints(minHeight: 60),
-        padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 10),
+        constraints: const BoxConstraints(minHeight: 50),
+        padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 8),
         decoration: const BoxDecoration(
           border: Border(bottom: BorderSide(color: kKioskLine)),
         ),
@@ -111,39 +111,41 @@ extension _EntitlementView on EmployeeWorkspaceState {
             padding: EdgeInsets.zero,
             child: ClipRRect(
               borderRadius: BorderRadius.circular(23),
-              child: ListView(
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(22, 18, 22, 8),
-                    child: Row(
-                      children: [
-                        const Expanded(
-                          child: Text('Breakdown', style: kKioskHeading),
-                        ),
-                        Text('$percent% used', style: kKioskLabel),
-                      ],
-                    ),
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(22, 4, 22, 14),
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(99),
-                      child: LinearProgressIndicator(
-                        minHeight: 16,
-                        value: e.progressValue,
-                        backgroundColor: const Color(0xFFE2E8F0),
-                        color: kKioskGreen,
+              child: Scrollbar(
+                child: ListView(
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(22, 14, 22, 6),
+                      child: Row(
+                        children: [
+                          const Expanded(
+                            child: Text('Breakdown', style: kKioskHeading),
+                          ),
+                          Text('$percent% used', style: kKioskLabel),
+                        ],
                       ),
                     ),
-                  ),
-                  const Divider(height: 1),
-                  tableRow('Leave year', year),
-                  tableRow('Measured in', e.isHours ? 'Hours' : 'Days'),
-                  tableRow('Allowance', e.totalLabel),
-                  tableRow('Booked', e.bookedLabel),
-                  tableRow('Remaining', e.balanceLabel, color: balanceColor),
-                  tableRow('Figures', basis),
-                ],
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(22, 2, 22, 12),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(99),
+                        child: LinearProgressIndicator(
+                          minHeight: 16,
+                          value: e.progressValue,
+                          backgroundColor: const Color(0xFFE2E8F0),
+                          color: kKioskGreen,
+                        ),
+                      ),
+                    ),
+                    const Divider(height: 1),
+                    tableRow('Leave year', year),
+                    tableRow('Measured in', e.isHours ? 'Hours' : 'Days'),
+                    tableRow('Allowance', e.totalLabel),
+                    tableRow('Booked', e.bookedLabel),
+                    tableRow('Remaining', e.balanceLabel, color: balanceColor),
+                    tableRow('Figures', basis),
+                  ],
+                ),
               ),
             ),
           ),

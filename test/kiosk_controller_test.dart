@@ -139,11 +139,11 @@ void main() {
         async.flushMicrotasks();
         expect(c.mode, KioskMode.signedIn);
         expect(c.session!.employeeId, 42);
-        expect(c.idle.remaining.value, 90);
+        expect(c.idle.remaining.value, 120);
         async.elapse(const Duration(seconds: 10));
-        expect(c.idle.remaining.value, 80);
+        expect(c.idle.remaining.value, 110);
         c.touch();
-        expect(c.idle.remaining.value, 90);
+        expect(c.idle.remaining.value, 120);
         c.dispose();
       });
     });
@@ -243,7 +243,7 @@ void main() {
         c.openSignIn();
         c.signInWithCard('A1B2');
         async.flushMicrotasks();
-        async.elapse(const Duration(seconds: 89));
+        async.elapse(const Duration(seconds: 119));
         expect(c.mode, KioskMode.signedIn);
         async.elapse(const Duration(seconds: 1));
         expect(c.mode, KioskMode.signedOut);

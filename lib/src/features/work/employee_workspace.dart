@@ -593,7 +593,12 @@ class EmployeeWorkspaceState extends State<EmployeeWorkspace> {
       if (from) {
         _leaveDateFrom = picked;
         final to = _leaveDateTo;
-        if (to == null || to.isBefore(picked)) _leaveDateTo = picked;
+        // Part day is a single date, so To follows the one date chosen.
+        if (to == null ||
+            to.isBefore(picked) ||
+            _usesTimeRangeForSelection(_selectedLeaveGroup)) {
+          _leaveDateTo = picked;
+        }
       } else {
         _leaveDateTo = picked;
         _leaveDateFrom ??= picked;
@@ -1324,7 +1329,7 @@ class _MenuDetailPage extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Container(
-              height: 76,
+              height: 68,
               color: Colors.white,
               padding: const EdgeInsets.symmetric(horizontal: 24),
               child: Row(
