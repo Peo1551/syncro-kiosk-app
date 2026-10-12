@@ -9,6 +9,8 @@ import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.view.View
 import android.view.WindowManager
 import io.flutter.embedding.android.FlutterActivity
@@ -43,6 +45,28 @@ class MainActivity : FlutterActivity() {
     private val adminComponent: ComponentName
         get() = ComponentName(this, KioskAdminReceiver::class.java)
 
+    // A normal (not dedicated) tablet: Android always lets someone unpin with
+    // the Back + Overview gesture, so the kiosk pins itself again whenever it
+    // is on screen and not pinned. Only Exit kiosk mode (behind the admin PIN)
+    // stops that, until the app next leaves the screen.
+    private val repinHandler = Handler(Looper.getMainLooper())
+    private val repinCheck = object : Runnable {
+        override fun run() {
+            repinIfNeeded()
+            repinHandler.postDelayed(this, 1500)
+        }
+    }
+
+    private fun repinIfNeeded() {
+        if (kioskSuspended || isDeviceOwner()) return
+        if (lockState() == "none") {
+            try {
+                startLockTask()
+            } catch (_: Exception) {
+            }
+        }
+    }
+
     private val homeAlias: ComponentName
         get() = ComponentName(packageName, "$packageName.KioskHomeAlias")
 
@@ -61,6 +85,13 @@ class MainActivity : FlutterActivity() {
                 // Never crash the kiosk over a lock-down failure.
             }
         }
+        repinHandler.removeCallbacks(repinCheck)
+        repinHandler.post(repinCheck)
+    }
+
+    override fun onPause() {
+        repinHandler.removeCallbacks(repinCheck)
+        super.onPause()
     }
 
     override fun onStop() {
@@ -88,18 +119,23 @@ class MainActivity : FlutterActivity() {
                         result.success(kioskStatus())
                     }
                     "exitKioskMode" -> {
+                        kioskSuspended = true
                         if (isDeviceOwner()) {
-                            kioskSuspended = true
                             exitDedicatedMode()
+                        } else {
+                            try {
+                                stopLockTask()
+                            } catch (_: Exception) {
+                            }
                         }
                         result.success(kioskStatus())
                     }
                     "resumeKioskMode" -> {
-                        // Only re-locks a dedicated tablet; a normal tablet is
-                        // left exactly as it is.
+                        kioskSuspended = false
                         if (isDeviceOwner()) {
-                            kioskSuspended = false
                             enterDedicatedMode()
+                        } else {
+                            repinIfNeeded()
                         }
                         result.success(kioskStatus())
                     }

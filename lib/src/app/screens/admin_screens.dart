@@ -336,19 +336,21 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
                     ),
                     const SizedBox(height: 16),
                   ],
-                  if (_kiosk != null && _kiosk!.isDeviceOwner) ...[
-                    if (_kiosk!.lockState != KioskLockState.none) ...[
-                      SizedBox(
-                        height: 60,
-                        child: OutlinedButton.icon(
-                          key: const Key('admin-exit-kiosk'),
-                          onPressed: () => unawaited(_exitKiosk()),
-                          icon: const Icon(Icons.lock_open_outlined),
-                          label: const Text('Exit kiosk mode'),
-                        ),
+                  if (_kiosk != null &&
+                      _kiosk!.lockTaskAvailable &&
+                      _kiosk!.lockState != KioskLockState.none) ...[
+                    SizedBox(
+                      height: 60,
+                      child: OutlinedButton.icon(
+                        key: const Key('admin-exit-kiosk'),
+                        onPressed: () => unawaited(_exitKiosk()),
+                        icon: const Icon(Icons.lock_open_outlined),
+                        label: const Text('Exit kiosk mode'),
                       ),
-                      const SizedBox(height: 12),
-                    ],
+                    ),
+                    const SizedBox(height: 12),
+                  ],
+                  if (_kiosk != null && _kiosk!.isDeviceOwner) ...[
                     SizedBox(
                       height: 60,
                       child: OutlinedButton.icon(
