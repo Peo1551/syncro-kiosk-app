@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../../core/widgets/kiosk_ui.dart';
+
 /// "Request sent": the employee chooses to carry on, or is signed out when
 /// the short countdown runs out.
 class RequestSentPage extends StatefulWidget {
@@ -46,66 +48,103 @@ class _RequestSentPageState extends State<RequestSentPage> {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     return Scaffold(
+      backgroundColor: kKioskBg,
       body: Center(
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 560),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 96,
-                height: 96,
-                decoration: const BoxDecoration(
-                  color: Color(0xFFEAF5DA),
-                  shape: BoxShape.circle,
-                ),
-                child: const Icon(
-                  Icons.check_rounded,
-                  size: 60,
-                  color: Color(0xFF1A9C44),
-                ),
-              ),
-              const SizedBox(height: 20),
-              Text('Request sent', style: theme.textTheme.headlineSmall),
-              const SizedBox(height: 8),
-              Text(
-                'Your manager will review it. You can follow it in Request History.',
-                textAlign: TextAlign.center,
-                style: theme.textTheme.bodyMedium,
-              ),
-              const SizedBox(height: 28),
-              Row(
+          constraints: const BoxConstraints(maxWidth: 760),
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: KioskPanel(
+              padding: const EdgeInsets.fromLTRB(48, 44, 48, 40),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  Expanded(
-                    child: SizedBox(
-                      height: 60,
-                      child: OutlinedButton(
-                        onPressed: () {
-                          _timer?.cancel();
-                          widget.onDoSomethingElse();
-                        },
-                        child: const Text('Do something else'),
-                      ),
+                  Container(
+                    width: 112,
+                    height: 112,
+                    decoration: const BoxDecoration(
+                      color: kKioskGreenSoft,
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(
+                      Icons.check_rounded,
+                      size: 72,
+                      color: kKioskPositive,
                     ),
                   ),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: SizedBox(
-                      height: 60,
-                      child: FilledButton(
-                        onPressed: () {
-                          _timer?.cancel();
-                          widget.onSignOut();
-                        },
-                        child: Text('Sign out now ($_left)'),
-                      ),
+                  const SizedBox(height: 24),
+                  const Text(
+                    'Request sent',
+                    style: TextStyle(
+                      fontSize: 32,
+                      fontWeight: FontWeight.w800,
+                      color: kKioskText,
                     ),
+                  ),
+                  const SizedBox(height: 10),
+                  const Text(
+                    'Your manager will review it. You can follow it in Request History.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(fontSize: 20, color: kKioskMuted),
+                  ),
+                  const SizedBox(height: 36),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: SizedBox(
+                          height: 76,
+                          child: OutlinedButton(
+                            key: const Key('sent-other'),
+                            onPressed: () {
+                              _timer?.cancel();
+                              widget.onDoSomethingElse();
+                            },
+                            style: OutlinedButton.styleFrom(
+                              side: const BorderSide(
+                                color: kKioskLine,
+                                width: 2,
+                              ),
+                              textStyle: const TextStyle(
+                                fontSize: 20,
+                                fontWeight: FontWeight.w700,
+                              ),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(20),
+                              ),
+                            ),
+                            child: const Text('Do something else'),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: SizedBox(
+                          height: 76,
+                          child: FilledButton(
+                            key: const Key('sent-sign-out'),
+                            onPressed: () {
+                              _timer?.cancel();
+                              widget.onSignOut();
+                            },
+                            style: FilledButton.styleFrom(
+                              textStyle: const TextStyle(
+                                fontSize: 22,
+                                fontWeight: FontWeight.w800,
+                              ),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(20),
+                              ),
+                            ),
+                            child: Text('Sign out now ($_left)'),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),
-            ],
+            ),
           ),
         ),
       ),

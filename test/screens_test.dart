@@ -2,84 +2,24 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:syncro_kiosk/src/app/kiosk_app.dart';
-import 'package:syncro_kiosk/src/app/kiosk_controller.dart';
-import 'package:syncro_kiosk/src/core/http/api_client.dart';
 import 'package:syncro_kiosk/src/features/work/request_sent_page.dart';
-import 'package:syncro_kiosk/src/kiosk/tablet.dart';
 import 'package:syncro_kiosk/src/kiosk/tablet_store.dart';
 
 import 'support/fake_server.dart';
-
-TabletPairing savedPairing() => TabletPairing(
-  accessToken: goodToken,
-  tabletUuid: 'uuid-1',
-  tablet: TabletInfo.fromJson(tabletJson),
-);
-
-Future<KioskController> launch(
-  WidgetTester tester,
-  FakeServer server, {
-  TabletStore? store,
-  DateTime? today,
-}) async {
-  tester.view.physicalSize = const Size(1280, 800);
-  tester.view.devicePixelRatio = 1;
-  addTearDown(tester.view.reset);
-  final controller = KioskController(
-    client: ApiClient(transport: server),
-    store: store ?? MemoryTabletStore(pairing: savedPairing()),
-    appVersion: '1.0.0+1',
-  );
-  await tester.pumpWidget(
-    SyncroKioskApp(controller: controller, today: today ?? DateTime(2026, 10, 9)),
-  );
-  await tester.runAsync(controller.start);
-  await settle(tester);
-  return controller;
-}
-
-/// Lets fake requests finish and frames settle without waiting on
-/// never-ending spinners.
-Future<void> settle(WidgetTester tester, [int frames = 6]) async {
-  for (var i = 0; i < frames; i++) {
-    await tester.pump(const Duration(milliseconds: 100));
-  }
-}
-
-Future<void> finish(WidgetTester tester, KioskController c) async {
-  c.dispose();
-  await tester.pumpWidget(const SizedBox());
-  await tester.pump(const Duration(seconds: 1));
-}
-
-Future<void> typeDigits(WidgetTester tester, String digits) async {
-  for (final d in digits.split('')) {
-    await tester.tap(find.byKey(Key('key-$d')));
-    await tester.pump();
-  }
-}
-
-Future<void> signInWithPin(WidgetTester tester) async {
-  await tester.tap(find.byKey(const Key('wake-sign-in')));
-  await settle(tester);
-  await typeDigits(tester, '1234');
-  await tester.tap(find.byKey(const Key('sign-in-next')));
-  await tester.pump();
-  expect(find.text('PIN'), findsOneWidget);
-  await typeDigits(tester, '9876');
-  await tester.tap(find.byKey(const Key('sign-in-next')));
-  await settle(tester, 10);
-}
+import 'support/harness.dart';
 
 void main() {
-  testWidgets('pair screen: 6-digit keypad pairs and shows the wake screen', (tester) async {
+  testWidgets('pair screen: 6-digit keypad pairs and shows the wake screen', (
+    tester,
+  ) async {
     final server = workingServer();
     final store = MemoryTabletStore();
     final c = await launch(tester, server, store: store);
     expect(find.text('Pair this tablet'), findsOneWidget);
     expect(
-      find.text('In Syncro Connect, open Settings › Syncro Kiosk and choose Pair a tablet.'),
+      find.text(
+        'In Syncro Connect, open Settings › Syncro Kiosk and choose Pair a tablet.',
+      ),
       findsOneWidget,
     );
     await typeDigits(tester, '12345');
@@ -106,11 +46,16 @@ void main() {
     await typeDigits(tester, '000000');
     await tester.tap(find.byKey(const Key('pair-submit')));
     await settle(tester);
-    expect(find.text('That pairing code is wrong or has expired.'), findsOneWidget);
+    expect(
+      find.text('That pairing code is wrong or has expired.'),
+      findsOneWidget,
+    );
     await finish(tester, c);
   });
 
-  testWidgets('sign in with clock number and PIN, see home, sign out', (tester) async {
+  testWidgets('sign in with clock number and PIN, see home, sign out', (
+    tester,
+  ) async {
     final server = workingServer();
     addEmployeeEndpoints(server);
     final c = await launch(tester, server);
@@ -151,9 +96,15 @@ void main() {
     await finish(tester, c);
   });
 
-  testWidgets('flexi and timesheet tiles follow the group and flexi-summary', (tester) async {
+  testWidgets('flexi and timesheet tiles follow the group and flexi-summary', (
+    tester,
+  ) async {
     final server = workingServer();
-    addEmployeeEndpoints(server, permissions: {'view_time_sheet': true}, onFlexi: true);
+    addEmployeeEndpoints(
+      server,
+      permissions: {'view_time_sheet': true},
+      onFlexi: true,
+    );
     final c = await launch(tester, server);
     await signInWithPin(tester);
     expect(find.byKey(const Key('tile-myClockingHub')), findsOneWidget);
@@ -163,35 +114,46 @@ void main() {
     await settle(tester);
     expect(find.text('Leave type'), findsOneWidget);
     expect(find.text('Holiday'), findsWidgets);
-    expect(find.text('Take photo'), findsNothing, reason: 'allow_attachment is off');
+    expect(
+      find.text('Take photo'),
+      findsNothing,
+      reason: 'allow_attachment is off',
+    );
     await tester.tap(find.byKey(const Key('page-back')));
     await settle(tester);
     expect(find.text('What would you like to do?'), findsOneWidget);
     await finish(tester, c);
   });
 
-  testWidgets('countdown pill turns amber in the last 15 seconds and signs out at zero', (tester) async {
-    final server = workingServer();
-    addEmployeeEndpoints(server);
-    final c = await launch(tester, server);
-    await signInWithPin(tester);
-    Color pillBorder() {
-      final box = tester.widget<AnimatedContainer>(find.byKey(const Key('idle-pill')));
-      return ((box.decoration! as BoxDecoration).border! as Border).top.color;
-    }
+  testWidgets(
+    'countdown pill turns amber in the last 15 seconds and signs out at zero',
+    (tester) async {
+      final server = workingServer();
+      addEmployeeEndpoints(server);
+      final c = await launch(tester, server);
+      await signInWithPin(tester);
+      Color pillBorder() {
+        final box = tester.widget<AnimatedContainer>(
+          find.byKey(const Key('idle-pill')),
+        );
+        return ((box.decoration! as BoxDecoration).border! as Border).top.color;
+      }
 
-    expect(pillBorder(), isNot(const Color(0xFFF59E0B)));
-    await tester.pump(Duration(seconds: c.idle.remaining.value - 12));
-    await tester.pump();
-    expect(find.text('Signing out in 0:12'), findsOneWidget);
-    expect(pillBorder(), const Color(0xFFF59E0B));
-    await tester.pump(const Duration(seconds: 12));
-    await settle(tester);
-    expect(find.text("You're signed out"), findsOneWidget);
-    await finish(tester, c);
-  });
+      expect(pillBorder(), isNot(const Color(0xFFF59E0B)));
+      await tester.pump(Duration(seconds: c.idle.remaining.value - 12));
+      await tester.pump();
+      expect(find.text('Signing out in 0:12'), findsOneWidget);
+      expect(pillBorder(), const Color(0xFFF59E0B));
+      await tester.pump(const Duration(seconds: 12));
+      await settle(tester);
+      expect(find.text("You're signed out"), findsOneWidget);
+      await finish(tester, c);
+    },
+  );
 
-  testWidgets('required task: Continue is locked until hours are confirmed', (tester) async {
+  testWidgets('required task: Continue is locked until hours are confirmed', (
+    tester,
+  ) async {
     final server = workingServer();
     addEmployeeEndpoints(
       server,
@@ -210,14 +172,22 @@ void main() {
     );
     final c = await launch(tester, server);
     await signInWithPin(tester);
-    expect(find.text('Confirm your hours for Mon 28 Sep – Sun 4 Oct'), findsOneWidget);
+    expect(
+      find.text('Confirm your hours for Mon 28 Sep – Sun 4 Oct'),
+      findsOneWidget,
+    );
     expect(find.byKey(const Key('tile-requestLeave')), findsNothing);
-    final cont = tester.widget<FilledButton>(find.byKey(const Key('task-continue')));
+    final cont = tester.widget<FilledButton>(
+      find.byKey(const Key('task-continue')),
+    );
     expect(cont.onPressed, isNull);
 
     await tester.tap(find.byKey(const Key('task-confirm')));
     await settle(tester);
-    expect(server.to('/employee/api/timesheet-approve.php').single.bodyText, '{"session_id":77}');
+    expect(
+      server.to('/employee/api/timesheet-approve.php').single.bodyText,
+      '{"session_id":77}',
+    );
     expect(find.text('Thank you. Your hours are confirmed.'), findsOneWidget);
     await tester.tap(find.byKey(const Key('task-continue')));
     await settle(tester);
@@ -225,13 +195,20 @@ void main() {
     await finish(tester, c);
   });
 
-  testWidgets('required task: Something is wrong goes on to home', (tester) async {
+  testWidgets('required task: Something is wrong goes on to home', (
+    tester,
+  ) async {
     final server = workingServer();
     addEmployeeEndpoints(
       server,
       permissions: {'view_time_sheet': true, 'sign_time_sheet': true},
       timesheetRows: [
-        {'session_id': 77, 'work_date': '2026-09-30', 'status': 'action', 'requires_approval': true},
+        {
+          'session_id': 77,
+          'work_date': '2026-09-30',
+          'status': 'action',
+          'requires_approval': true,
+        },
       ],
     );
     final c = await launch(tester, server);
@@ -248,11 +225,15 @@ void main() {
     addEmployeeEndpoints(server);
     server.json('/employee/status-json.php', {
       'ok': false,
-      'message': 'This account no longer has mobile app access. Please speak to your manager.',
+      'message':
+          'This account no longer has mobile app access. Please speak to your manager.',
     }, status: 403);
     final c = await launch(tester, server);
     await signInWithPin(tester);
-    expect(find.textContaining('no longer has mobile app access'), findsOneWidget);
+    expect(
+      find.textContaining('no longer has mobile app access'),
+      findsOneWidget,
+    );
     expect(c.session, isNull);
     expect(server.to('/kiosk/api/sign-out.php'), hasLength(1));
     await finish(tester, c);
@@ -278,7 +259,9 @@ void main() {
     await finish(tester, c);
   });
 
-  testWidgets('admin: unpair asks for the PIN again and returns to Pair', (tester) async {
+  testWidgets('admin: unpair asks for the PIN again and returns to Pair', (
+    tester,
+  ) async {
     final server = workingServer();
     final store = MemoryTabletStore(pairing: savedPairing());
     final c = await launch(tester, server, store: store);
@@ -308,26 +291,27 @@ void main() {
     }, status: 403);
     final c = await launch(tester, server);
     await settle(tester);
-    expect(find.text('Syncro Kiosk is not active for this company'), findsOneWidget);
+    expect(
+      find.text('Syncro Kiosk is not active for this company'),
+      findsOneWidget,
+    );
     await finish(tester, c);
   });
 
-  testWidgets('a sent leave request ends on Request sent, then signs out', (tester) async {
+  testWidgets('a sent leave request ends on Request sent, then signs out', (
+    tester,
+  ) async {
     final server = workingServer();
     addEmployeeEndpoints(server);
     final c = await launch(tester, server);
     await signInWithPin(tester);
     await tester.tap(find.byKey(const Key('tile-requestLeave')));
     await settle(tester);
-    await tester.tap(find.byKey(const Key('leave-dates')));
+    await tester.tap(find.byKey(const Key('leave-date-from')));
     await settle(tester);
     await tester.tap(find.text('20').first);
     await tester.pump();
-    await tester.tap(find.text('21').first);
-    await tester.pump();
-    await tester.tap(find.text('Save'));
-    await settle(tester);
-    await tester.ensureVisible(find.byKey(const Key('leave-submit')));
+    await tester.tap(find.text('OK'));
     await settle(tester);
     await tester.tap(find.byKey(const Key('leave-submit')));
     await settle(tester);
@@ -337,7 +321,10 @@ void main() {
         .single;
     expect(create.headers['x-csrf-token'], 'csrf-1');
     expect(create.headers['cookie'], 'PHPSESSID=sess-1');
-    expect(String.fromCharCodes(create.body!), contains('name="action"\r\n\r\ncreate'));
+    expect(
+      String.fromCharCodes(create.body!),
+      contains('name="action"\r\n\r\ncreate'),
+    );
     expect(find.text('Request sent'), findsOneWidget);
     await tester.pump(const Duration(seconds: 8));
     await settle(tester);
@@ -366,7 +353,9 @@ void main() {
     expect(other, 0);
   });
 
-  testWidgets('request sent: Do something else stops the countdown', (tester) async {
+  testWidgets('request sent: Do something else stops the countdown', (
+    tester,
+  ) async {
     var signedOut = 0;
     var other = 0;
     await tester.pumpWidget(

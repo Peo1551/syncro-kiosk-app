@@ -1,8 +1,8 @@
 // The employee app's "My Work" tab (features/home/presentation/home_page.dart,
 // _userMenuTab and the pages it opens), lifted out of HomePage for the kiosk.
 // Clocking, manager, location, notifications, profile and offline queue code
-// is left behind. Page bodies are copied as they are in the employee app so the
-// two look and behave the same.
+// is left behind. The data loading, validation and API calls are the employee
+// app's; the pages themselves (in views/) are laid out for a landscape tablet.
 import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
@@ -14,6 +14,7 @@ import 'package:image_picker/image_picker.dart';
 import '../../core/http/api_client.dart';
 import '../../core/session.dart';
 import '../../core/widgets/app_modal.dart';
+import '../../core/widgets/kiosk_ui.dart';
 import '../flexi/data/flexi_api.dart';
 import '../flexi/models/flexi_summary.dart';
 import '../flexi/presentation/my_flexi_page.dart';
@@ -31,7 +32,12 @@ import '../timesheets/models/timesheet_week_group.dart';
 import 'feature_visibility.dart';
 import 'request_sent_page.dart';
 
-enum _TimesheetRangePreset { thisMonth, last7Days, last30Days, custom }
+part 'views/request_leave_view.dart';
+part 'views/leave_lists_view.dart';
+part 'views/entitlement_view.dart';
+part 'views/clocking_hub_view.dart';
+
+enum _HistoryFilter { all, pending, approved, rejected }
 
 /// Takes a photo for a leave attachment. Injected so tests need no camera.
 typedef PhotoTaker = Future<LeaveAttachment?> Function();
@@ -91,20 +97,22 @@ class EmployeeWorkspaceState extends State<EmployeeWorkspace> {
   TimeOfDay? _leaveTimeFrom;
   TimeOfDay? _leaveTimeTo;
   LeaveAttachment? _leaveAttachment;
-  DateTime _timesheetDateFrom = DateTime(
-    DateTime.now().year,
-    DateTime.now().month,
-    1,
+  DateTime _timesheetDateFrom = _mondayOf(DateTime.now());
+  late DateTime _timesheetDateTo = DateTime(
+    _timesheetDateFrom.year,
+    _timesheetDateFrom.month,
+    _timesheetDateFrom.day + 6,
   );
-  DateTime _timesheetDateTo = DateTime.now();
-  _TimesheetRangePreset _timesheetRangePreset = _TimesheetRangePreset.thisMonth;
+  _HistoryFilter _historyFilter = _HistoryFilter.all;
+  int? _selectedHistoryRequestId;
+  int _upcomingView = 0;
+  int? _selectedUpcomingIndex;
+  int? _selectedTimesheetIndex;
 
   static const int _maxLeaveAttachmentBytes = 10 * 1024 * 1024;
 
-  List<KioskFeature> get features => visibleFeatures(
-    permissions: widget.permissions,
-    flexi: _flexiSummary,
-  );
+  List<KioskFeature> get features =>
+      visibleFeatures(permissions: widget.permissions, flexi: _flexiSummary);
 
   bool get _attachmentsAllowed => widget.permissions.allowAttachment;
 
@@ -134,6 +142,13 @@ class EmployeeWorkspaceState extends State<EmployeeWorkspace> {
   void _bumpMenuDetailRevision() {
     if (!mounted) return;
     _menuDetailRevision.value = _menuDetailRevision.value + 1;
+  }
+
+  /// setState for the open feature page as well as this widget.
+  void _set(VoidCallback fn) {
+    if (!mounted) return;
+    setState(fn);
+    _bumpMenuDetailRevision();
   }
 
   /// The API client has already ended the kiosk session for these.
@@ -483,6 +498,7 @@ class EmployeeWorkspaceState extends State<EmployeeWorkspace> {
       if (!mounted) return;
       setState(() {
         _timesheetRows = rows;
+        _selectedTimesheetIndex = null;
         _timesheetError = null;
         _timesheetLoaded = true;
       });
@@ -504,29 +520,6 @@ class EmployeeWorkspaceState extends State<EmployeeWorkspace> {
     }
   }
 
-  DateTimeRange _timesheetRangeForPreset(_TimesheetRangePreset preset) {
-    final today = _dateOnly(DateTime.now());
-    switch (preset) {
-      case _TimesheetRangePreset.last7Days:
-        return DateTimeRange(
-          start: today.subtract(const Duration(days: 6)),
-          end: today,
-        );
-      case _TimesheetRangePreset.last30Days:
-        return DateTimeRange(
-          start: today.subtract(const Duration(days: 29)),
-          end: today,
-        );
-      case _TimesheetRangePreset.thisMonth:
-        return DateTimeRange(
-          start: DateTime(today.year, today.month),
-          end: today,
-        );
-      case _TimesheetRangePreset.custom:
-        return DateTimeRange(start: _timesheetDateFrom, end: _timesheetDateTo);
-    }
-  }
-
   DateTime _dateOnly(DateTime value) {
     final local = value.toLocal();
     return DateTime(local.year, local.month, local.day);
@@ -544,66 +537,69 @@ class EmployeeWorkspaceState extends State<EmployeeWorkspace> {
     return null;
   }
 
-  String _timesheetRangePresetLabel(_TimesheetRangePreset preset) {
-    switch (preset) {
-      case _TimesheetRangePreset.thisMonth:
-        return 'This month';
-      case _TimesheetRangePreset.last7Days:
-        return 'Last 7 days';
-      case _TimesheetRangePreset.last30Days:
-        return 'Last 30 days';
-      case _TimesheetRangePreset.custom:
-        return 'Custom';
-    }
+  static DateTime _mondayOf(DateTime value) {
+    final day = DateTime(value.year, value.month, value.day);
+    return day.subtract(Duration(days: day.weekday - DateTime.monday));
   }
 
-  void _applyTimesheetRange(DateTimeRange range, _TimesheetRangePreset preset) {
-    final start = _dateOnly(range.start);
-    final end = _dateOnly(range.end);
+  bool get _timesheetOnCurrentWeek =>
+      !_timesheetDateFrom.isBefore(_mondayOf(DateTime.now()));
+
+  /// Moves the Clocking Hub by whole weeks (Monday to Sunday) and reloads.
+  Future<void> _shiftTimesheetWeek(int weeks) async {
+    final start = DateTime(
+      _timesheetDateFrom.year,
+      _timesheetDateFrom.month,
+      _timesheetDateFrom.day + 7 * weeks,
+    );
+    final end = DateTime(start.year, start.month, start.day + 6);
     final rangeError = _validateTimesheetRange(start, end);
-    setState(() {
+    _set(() {
       if (rangeError == null) {
         _timesheetDateFrom = start;
         _timesheetDateTo = end;
-        _timesheetRangePreset = preset;
       }
       _timesheetError = rangeError;
     });
-    _bumpMenuDetailRevision();
+    if (rangeError != null) return;
+    await _refreshTimesheets(showLoader: true);
   }
 
-  Future<void> _selectTimesheetRangePreset(
-    BuildContext pickerContext,
-    _TimesheetRangePreset preset,
-  ) async {
-    if (preset == _TimesheetRangePreset.custom) {
-      await _pickTimesheetRange(pickerContext);
-      return;
-    }
-    _applyTimesheetRange(_timesheetRangeForPreset(preset), preset);
-    await _refreshTimesheets(showLoader: true);
+  Future<void> _showCurrentTimesheetWeek() {
+    final weeks =
+        _mondayOf(DateTime.now()).difference(_timesheetDateFrom).inDays ~/ 7;
+    return _shiftTimesheetWeek(weeks);
   }
 
   // ------------------------------------------------------------ leave form
 
-  Future<void> _pickLeaveRange(BuildContext pickerContext) async {
-    final initialFrom = _leaveDateFrom ?? _leaveDateTo ?? DateTime.now();
-    final initialTo = _leaveDateTo ?? _leaveDateFrom ?? initialFrom;
-    final picked = await showDateRangePicker(
+  Future<void> _pickLeaveDate(
+    BuildContext pickerContext, {
+    required bool from,
+  }) async {
+    final now = DateTime.now();
+    final firstDate = now.subtract(const Duration(days: 365));
+    final lastDate = now.add(const Duration(days: 365 * 3));
+    final current = from ? _leaveDateFrom : _leaveDateTo;
+    final picked = await showKioskDatePicker(
       context: pickerContext,
-      initialDateRange: DateTimeRange(
-        start: initialFrom,
-        end: initialTo.isBefore(initialFrom) ? initialFrom : initialTo,
-      ),
-      firstDate: DateTime.now().subtract(const Duration(days: 365)),
-      lastDate: DateTime.now().add(const Duration(days: 365 * 3)),
+      initialDate: current ?? _leaveDateFrom ?? _leaveDateTo ?? now,
+      firstDate: from ? firstDate : (_leaveDateFrom ?? firstDate),
+      lastDate: lastDate,
+      helpText: from ? 'First day of leave' : 'Last day of leave',
     );
     if (picked == null || !mounted) return;
-    setState(() {
-      _leaveDateFrom = picked.start;
-      _leaveDateTo = picked.end;
+    _set(() {
+      if (from) {
+        _leaveDateFrom = picked;
+        final to = _leaveDateTo;
+        if (to == null || to.isBefore(picked)) _leaveDateTo = picked;
+      } else {
+        _leaveDateTo = picked;
+        _leaveDateFrom ??= picked;
+      }
+      _leaveError = null;
     });
-    _bumpMenuDetailRevision();
   }
 
   Future<void> _pickLeaveTime(
@@ -618,43 +614,13 @@ class EmployeeWorkspaceState extends State<EmployeeWorkspace> {
       initialTime: initial,
     );
     if (picked == null || !mounted) return;
-    setState(() {
+    _set(() {
       if (from) {
         _leaveTimeFrom = picked;
       } else {
         _leaveTimeTo = picked;
       }
     });
-    _bumpMenuDetailRevision();
-  }
-
-  Widget _buildLeaveTimeRangeControls(BuildContext pageContext) {
-    String fmtTimeButton(TimeOfDay? time) {
-      if (time == null) return '--:--';
-      return _fmtTime(time);
-    }
-
-    return Row(
-      children: [
-        Expanded(
-          child: OutlinedButton(
-            onPressed: _leaveSubmitting
-                ? null
-                : () => _pickLeaveTime(pageContext, from: true),
-            child: Text('From time: ${fmtTimeButton(_leaveTimeFrom)}'),
-          ),
-        ),
-        const SizedBox(width: 8),
-        Expanded(
-          child: OutlinedButton(
-            onPressed: _leaveSubmitting
-                ? null
-                : () => _pickLeaveTime(pageContext, from: false),
-            child: Text('To time: ${fmtTimeButton(_leaveTimeTo)}'),
-          ),
-        ),
-      ],
-    );
   }
 
   /// Kiosk: camera only. A shared tablet must not offer its file store, and
@@ -695,7 +661,10 @@ class EmployeeWorkspaceState extends State<EmployeeWorkspace> {
   }) {
     final name = fileName.trim();
     if (name.isEmpty || bytes == null || bytes.isEmpty) {
-      _showAttachmentMessage(routeContext, 'Could not read the captured photo.');
+      _showAttachmentMessage(
+        routeContext,
+        'Could not read the captured photo.',
+      );
       return null;
     }
     if (bytes.length > _maxLeaveAttachmentBytes) {
@@ -713,9 +682,11 @@ class EmployeeWorkspaceState extends State<EmployeeWorkspace> {
     final trimmed = rawName.trim();
     if (trimmed.isNotEmpty &&
         trimmed.contains('.') &&
-        const ['jpg', 'jpeg', 'png'].contains(
-          trimmed.split('.').last.toLowerCase(),
-        )) {
+        const [
+          'jpg',
+          'jpeg',
+          'png',
+        ].contains(trimmed.split('.').last.toLowerCase())) {
       return trimmed;
     }
     final now = DateTime.now();
@@ -867,8 +838,7 @@ class EmployeeWorkspaceState extends State<EmployeeWorkspace> {
     navigator.push(
       MaterialPageRoute<void>(
         builder: (_) => RequestSentPage(
-          onDoSomethingElse: () =>
-              navigator.popUntil((route) => route.isFirst),
+          onDoSomethingElse: () => navigator.popUntil((route) => route.isFirst),
           onSignOut: widget.onSignOut,
         ),
       ),
@@ -977,510 +947,10 @@ class EmployeeWorkspaceState extends State<EmployeeWorkspace> {
     );
   }
 
-  String _fmtDateForButton(DateTime? dt) {
-    if (dt == null) return '--/--/----';
-    final y = dt.year.toString().padLeft(4, '0');
-    final m = dt.month.toString().padLeft(2, '0');
-    final d = dt.day.toString().padLeft(2, '0');
-    return '$d/$m/$y';
-  }
-
   String _fmtTime(TimeOfDay time) {
     final hh = time.hour.toString().padLeft(2, '0');
     final mm = time.minute.toString().padLeft(2, '0');
     return '$hh:$mm';
-  }
-
-  Widget _statusChip(String text) {
-    final lower = text.toLowerCase();
-    final approved = lower.contains('approved') || lower.contains('complete');
-    final pending =
-        lower.contains('pending') || lower.contains('removal pending');
-    final rejected = lower.contains('rejected') || lower.contains('cancelled');
-    final color = rejected
-        ? const Color(0xFFEF4444)
-        : pending
-        ? const Color(0xFFF59E0B)
-        : approved
-        ? const Color(0xFF8FD3A3)
-        : const Color(0xFFD7E0EA);
-    final bg = rejected
-        ? const Color(0xFFFFEBEE)
-        : pending
-        ? const Color(0xFFFFF7EA)
-        : approved
-        ? const Color(0xFFEAF8EF)
-        : const Color(0xFFF3F6FA);
-    return Chip(
-      label: Text(text),
-      side: BorderSide(color: color),
-      backgroundColor: bg,
-      visualDensity: VisualDensity.compact,
-    );
-  }
-
-  // ------------------------------------------------------- Request Leave
-
-  Widget _userTab([BuildContext? viewContext]) {
-    final pageContext = viewContext ?? context;
-    final theme = Theme.of(pageContext);
-    final group = _selectedLeaveGroup;
-    final subtypeOptions = group == null
-        ? const <LeaveSubtypeOption>[]
-        : _subtypesForGroup(group);
-    final useTimeRange = _usesTimeRangeForSelection(group);
-    final dayPartOptions = _dayPartOptionsForGroup(group);
-    final selectedDayPart = _selectedDayPartForGroup(group);
-    final partDayEligibility = _partDayEligibilityForGroup(group);
-    final subtypeLocked = group != null && !group.allowAlternateSubtypes;
-    final attachmentRequired = _isAttachmentRequiredForSelection();
-    final showAttachment = _attachmentsAllowed || attachmentRequired;
-    final pendingRequests = _leaveRequests.where(_isPendingRequest).toList();
-
-    return RefreshIndicator(
-      onRefresh: _refreshLeave,
-      child: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  if (_leaveLoading)
-                    const Padding(
-                      padding: EdgeInsets.symmetric(vertical: 12),
-                      child: Center(child: CircularProgressIndicator()),
-                    )
-                  else if (_leaveGroups.isEmpty)
-                    Text(
-                      'No leave groups available. Contact your manager.',
-                      style: theme.textTheme.bodyMedium,
-                    )
-                  else ...[
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(20),
-                        border: Border.all(color: const Color(0xFFDCE8B7)),
-                        boxShadow: const [
-                          BoxShadow(
-                            color: Color(0x110F172A),
-                            blurRadius: 20,
-                            offset: Offset(0, 10),
-                          ),
-                        ],
-                      ),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Container(
-                            width: 46,
-                            height: 46,
-                            decoration: BoxDecoration(
-                              color: const Color(0xFF97CC33),
-                              borderRadius: BorderRadius.circular(16),
-                            ),
-                            child: const Icon(
-                              Icons.event_available_rounded,
-                              color: Colors.white,
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  'Request leave',
-                                  style: theme.textTheme.titleMedium?.copyWith(
-                                    fontWeight: FontWeight.w800,
-                                  ),
-                                ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  showAttachment
-                                      ? 'Choose the type, set the dates, and add a photo if needed.'
-                                      : 'Choose the type and set the dates.',
-                                  style: theme.textTheme.bodySmall?.copyWith(
-                                    color: const Color(0xFF7B8794),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 14),
-                    Text(
-                      'Leave type',
-                      style: theme.textTheme.titleSmall?.copyWith(
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    DropdownButtonFormField<String>(
-                      key: const Key('leave-group'),
-                      initialValue: _selectedLeaveGroupId,
-                      decoration: const InputDecoration(
-                        labelText: 'Group',
-                        filled: true,
-                        fillColor: Colors.white,
-                      ),
-                      items: _leaveGroups
-                          .map(
-                            (g) => DropdownMenuItem<String>(
-                              value: g.groupId,
-                              child: Text(g.name),
-                            ),
-                          )
-                          .toList(),
-                      onChanged: _leaveSubmitting
-                          ? null
-                          : (value) {
-                              if (value == null) return;
-                              setState(() => _selectLeaveGroup(value));
-                              _bumpMenuDetailRevision();
-                            },
-                    ),
-                    const SizedBox(height: 12),
-                    DropdownButtonFormField<int>(
-                      key: ValueKey('leave-subtype-$_selectedLeaveGroupId'),
-                      initialValue: _selectedLeaveSubtypeId,
-                      decoration: const InputDecoration(
-                        labelText: 'Subtype',
-                        filled: true,
-                        fillColor: Colors.white,
-                      ),
-                      items: subtypeOptions
-                          .map(
-                            (s) => DropdownMenuItem<int>(
-                              value: s.subtypeId,
-                              child: Text(s.name),
-                            ),
-                          )
-                          .toList(),
-                      onChanged:
-                          (_leaveSubmitting ||
-                              subtypeLocked ||
-                              subtypeOptions.isEmpty)
-                          ? null
-                          : (value) {
-                              setState(() => _selectedLeaveSubtypeId = value);
-                              _bumpMenuDetailRevision();
-                            },
-                    ),
-                    if (group != null &&
-                        group.groupRef.trim().toUpperCase() == 'FLX' &&
-                        FlexiSummary.shouldShow(_flexiSummary)) ...[
-                      const SizedBox(height: 12),
-                      FlexiRequestBalanceNote(summary: _flexiSummary!),
-                    ],
-                    const SizedBox(height: 14),
-                    Text(
-                      'Dates',
-                      style: theme.textTheme.titleSmall?.copyWith(
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    SizedBox(
-                      width: double.infinity,
-                      height: 56,
-                      child: OutlinedButton(
-                        key: const Key('leave-dates'),
-                        onPressed: _leaveSubmitting
-                            ? null
-                            : () => _pickLeaveRange(pageContext),
-                        child: Text(
-                          'Date range: ${_fmtDateForButton(_leaveDateFrom)} to ${_fmtDateForButton(_leaveDateTo)}',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    if (_leaveDateFrom != null || _leaveDateTo != null) ...[
-                      const SizedBox(height: 8),
-                      Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 11,
-                        ),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFF8FBEF),
-                          borderRadius: BorderRadius.circular(14),
-                          border: Border.all(color: const Color(0xFFD7E9AF)),
-                        ),
-                        child: Text(
-                          'Selected dates: ${_fmtDateForButton(_leaveDateFrom)} to ${_fmtDateForButton(_leaveDateTo)}',
-                          style: theme.textTheme.bodyMedium?.copyWith(
-                            fontWeight: FontWeight.w600,
-                            color: const Color(0xFF47611F),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-                    ],
-                    DropdownButtonFormField<String>(
-                      key: ValueKey('leave-daypart-$_selectedLeaveGroupId'),
-                      initialValue: selectedDayPart,
-                      decoration: const InputDecoration(
-                        labelText: 'Day part',
-                        filled: true,
-                        fillColor: Colors.white,
-                      ),
-                      items: dayPartOptions
-                          .map(
-                            (value) => DropdownMenuItem<String>(
-                              value: value,
-                              child: Text(_dayPartLabel(value)),
-                            ),
-                          )
-                          .toList(),
-                      onChanged: _leaveSubmitting
-                          ? null
-                          : (value) => setState(() {
-                              if (value != null) {
-                                _selectedDayPart = value;
-                                if (value != 'PART') {
-                                  _leaveTimeFrom = null;
-                                  _leaveTimeTo = null;
-                                }
-                                _leaveError = null;
-                              }
-                              _bumpMenuDetailRevision();
-                            }),
-                    ),
-                    if (!partDayEligibility.allowed &&
-                        partDayEligibility.reason != 'daily_entitlement_mode' &&
-                        group?.groupRef.trim().toUpperCase() == 'HOL') ...[
-                      const SizedBox(height: 6),
-                      Text(
-                        partDayEligibility.denialMessage,
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: const Color(0xFF6B7280),
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                    ],
-                    if (useTimeRange) ...[
-                      const SizedBox(height: 8),
-                      _buildLeaveTimeRangeControls(pageContext),
-                    ],
-                    const SizedBox(height: 14),
-                    Text(
-                      showAttachment ? 'Notes & attachment' : 'Notes',
-                      style: theme.textTheme.titleSmall?.copyWith(
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    TextField(
-                      controller: _leaveNotesCtrl,
-                      maxLines: 3,
-                      decoration: const InputDecoration(
-                        labelText: 'Notes',
-                        hintText: 'Add any context your manager should see.',
-                        alignLabelWithHint: true,
-                        filled: true,
-                        fillColor: Colors.white,
-                      ),
-                    ),
-                    if (showAttachment) ...[
-                      const SizedBox(height: 10),
-                      Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.all(13),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(14),
-                          border: Border.all(color: const Color(0xFFE2E8F0)),
-                        ),
-                        child: Row(
-                          children: [
-                            const Icon(
-                              Icons.photo_camera_outlined,
-                              size: 18,
-                              color: Color(0xFF64748B),
-                            ),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: Text(
-                                _leaveAttachment == null
-                                    ? 'No photo added'
-                                    : _leaveAttachment!.fileName,
-                                overflow: TextOverflow.ellipsis,
-                                style: theme.textTheme.bodyMedium?.copyWith(
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ),
-                            if (_leaveAttachment != null)
-                              TextButton(
-                                onPressed: _leaveSubmitting
-                                    ? null
-                                    : () {
-                                        setState(() => _leaveAttachment = null);
-                                        _bumpMenuDetailRevision();
-                                      },
-                                child: const Text('Remove'),
-                              ),
-                            TextButton(
-                              onPressed: _leaveSubmitting
-                                  ? null
-                                  : () async {
-                                      final picked = await _pickAttachment(
-                                        pageContext,
-                                      );
-                                      if (picked == null || !mounted) return;
-                                      setState(() => _leaveAttachment = picked);
-                                      _bumpMenuDetailRevision();
-                                    },
-                              child: Text(
-                                _leaveAttachment == null
-                                    ? 'Take photo'
-                                    : 'Retake',
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        attachmentRequired
-                            ? 'A photo is required for this selection.'
-                            : 'Photo optional (max 10MB).',
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: attachmentRequired
-                              ? const Color(0xFFB45309)
-                              : const Color(0xFF6B7280),
-                          fontWeight: attachmentRequired
-                              ? FontWeight.w700
-                              : FontWeight.w500,
-                        ),
-                      ),
-                    ],
-                  ],
-                  if (_leaveError != null) ...[
-                    const SizedBox(height: 10),
-                    Text(
-                      _leaveError!,
-                      style: TextStyle(
-                        color: theme.colorScheme.error,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ],
-                  const SizedBox(height: 14),
-                  SizedBox(
-                    width: double.infinity,
-                    height: 56,
-                    child: ElevatedButton(
-                      key: const Key('leave-submit'),
-                      onPressed:
-                          (_leaveSubmitting ||
-                              _leaveLoading ||
-                              _leaveGroups.isEmpty)
-                          ? null
-                          : () => _submitLeaveRequest(pageContext),
-                      child: _leaveSubmitting
-                          ? const SizedBox(
-                              width: 18,
-                              height: 18,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Text('Submit'),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 12),
-          Text('Pending requests', style: theme.textTheme.titleMedium),
-          const SizedBox(height: 8),
-          if (_leaveLoading)
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: 24),
-              child: Center(child: CircularProgressIndicator()),
-            )
-          else if (pendingRequests.isEmpty)
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Text(
-                  'No pending requests.',
-                  style: theme.textTheme.bodySmall,
-                ),
-              ),
-            )
-          else
-            ...pendingRequests.map(
-              (request) => _buildLeaveRequestCard(pageContext, request),
-            ),
-        ],
-      ),
-    );
-  }
-
-  // ------------------------------------------------------ Request History
-
-  Widget _requestHistoryTab([BuildContext? viewContext]) {
-    final pageContext = viewContext ?? context;
-    final pending = _leaveRequests
-        .where((request) => request.isRequested && _isPendingRequest(request))
-        .toList();
-    final approved = _leaveRequests
-        .where((request) => request.isRequested && _isApprovedRequest(request))
-        .toList();
-    final rejected = _leaveRequests
-        .where((request) => request.isRequested && _isRejectedRequest(request))
-        .toList();
-
-    return DefaultTabController(
-      length: 3,
-      child: Column(
-        children: [
-          const TabBar(
-            tabs: [
-              Tab(text: 'Pending'),
-              Tab(text: 'Approved'),
-              Tab(text: 'Rejected'),
-            ],
-          ),
-          Expanded(
-            child: TabBarView(
-              children: [
-                _leaveRequestList(
-                  pageContext,
-                  rows: pending,
-                  emptyMessage: 'No pending requests yet.',
-                ),
-                _leaveRequestList(
-                  pageContext,
-                  rows: approved,
-                  emptyMessage: 'No approved requests yet.',
-                  useHistoryStatusLabel: true,
-                ),
-                _leaveRequestList(
-                  pageContext,
-                  rows: rejected,
-                  emptyMessage: 'No rejected requests yet.',
-                  allowActions: false,
-                  useHistoryStatusLabel: true,
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
   }
 
   // ------------------------------------------------------- Upcoming Leave
@@ -1548,611 +1018,6 @@ class EmployeeWorkspaceState extends State<EmployeeWorkspace> {
     );
   }
 
-  Widget _upcomingTab([BuildContext? viewContext]) {
-    final pageContext = viewContext ?? context;
-    final rows = _upcomingLeaveRows();
-    final upcomingViews = _upcomingLeaveViews;
-    final tabs = <Tab>[const Tab(text: 'My Leave')];
-    final views = <Widget>[
-      _leaveRequestList(
-        pageContext,
-        rows: rows,
-        emptyMessage: 'No upcoming leave booked in the next 12 months.',
-      ),
-    ];
-
-    if (upcomingViews?.canViewTeam == true) {
-      tabs.add(const Tab(text: 'My Team'));
-      views.add(
-        _sharedUpcomingLeaveList(
-          pageContext,
-          rows: _filterSharedUpcomingRows(upcomingViews?.team ?? const []),
-          emptyMessage:
-              'No upcoming leave is booked for your team in the next 12 months.',
-        ),
-      );
-    }
-
-    if (upcomingViews?.canViewCompany == true) {
-      tabs.add(const Tab(text: 'Company'));
-      views.add(
-        _sharedUpcomingLeaveList(
-          pageContext,
-          rows: _filterSharedUpcomingRows(upcomingViews?.company ?? const []),
-          emptyMessage:
-              'No upcoming leave is booked across the company in the next 12 months.',
-        ),
-      );
-    }
-
-    if (tabs.length == 1) {
-      return views.first;
-    }
-
-    return DefaultTabController(
-      length: tabs.length,
-      child: Column(
-        children: [
-          TabBar(tabs: tabs),
-          Expanded(child: TabBarView(children: views)),
-        ],
-      ),
-    );
-  }
-
-  Widget _sharedUpcomingLeaveList(
-    BuildContext viewContext, {
-    required List<LeaveUpcomingEntry> rows,
-    required String emptyMessage,
-  }) {
-    return RefreshIndicator(
-      onRefresh: _refreshLeave,
-      child: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          if (_upcomingLeaveLoading && _upcomingLeaveViews == null)
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: 24),
-              child: Center(child: CircularProgressIndicator()),
-            )
-          else ...[
-            if ((_upcomingLeaveError ?? '').trim().isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 10),
-                child: Card(
-                  child: Padding(
-                    padding: const EdgeInsets.all(14),
-                    child: Text(
-                      _upcomingLeaveError!,
-                      style: Theme.of(viewContext).textTheme.bodySmall
-                          ?.copyWith(
-                            color: Theme.of(viewContext).colorScheme.error,
-                          ),
-                    ),
-                  ),
-                ),
-              ),
-            if (rows.isEmpty)
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Text(
-                    emptyMessage,
-                    style: Theme.of(viewContext).textTheme.bodySmall,
-                  ),
-                ),
-              )
-            else
-              ...rows.map(
-                (entry) => _buildSharedUpcomingCard(viewContext, entry),
-              ),
-          ],
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSharedUpcomingCard(
-    BuildContext viewContext,
-    LeaveUpcomingEntry entry,
-  ) {
-    final people = entry.people;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: Card(
-        child: Padding(
-          padding: const EdgeInsets.all(14),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      entry.dateRangeText,
-                      style: Theme.of(viewContext).textTheme.titleMedium,
-                    ),
-                  ),
-                  _statusChip(
-                    entry.count == 1 ? '1 person' : '${entry.count} people',
-                  ),
-                ],
-              ),
-              const SizedBox(height: 6),
-              Text('Type: ${entry.typeLabel}'),
-              Text('Day part: ${entry.dayPartLabel}'),
-              const SizedBox(height: 10),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: people.map((person) {
-                  final subtitleParts = <String>[
-                    if (person.departmentName.trim().isNotEmpty)
-                      person.departmentName.trim(),
-                    if (person.siteName.trim().isNotEmpty)
-                      person.siteName.trim(),
-                  ];
-                  return Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 10,
-                    ),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFF8FAFC),
-                      borderRadius: BorderRadius.circular(14),
-                      border: Border.all(color: const Color(0xFFE2E8F0)),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          person.name.trim().isEmpty ? 'Employee' : person.name,
-                          style: Theme.of(viewContext).textTheme.bodyMedium
-                              ?.copyWith(fontWeight: FontWeight.w700),
-                        ),
-                        if (subtitleParts.isNotEmpty) ...[
-                          const SizedBox(height: 2),
-                          Text(
-                            subtitleParts.join(' • '),
-                            style: Theme.of(viewContext).textTheme.bodySmall,
-                          ),
-                        ],
-                      ],
-                    ),
-                  );
-                }).toList(),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  // ------------------------------------------------------- My Entitlement
-
-  Widget _myEntitlementTab([BuildContext? viewContext]) {
-    final pageContext = viewContext ?? context;
-    final theme = Theme.of(pageContext);
-    final entitlement = _leaveEntitlement;
-    return RefreshIndicator(
-      onRefresh: _refreshEntitlement,
-      child: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: _entitlementLoading
-                  ? const Center(child: CircularProgressIndicator())
-                  : entitlement == null && _entitlementError != null
-                  ? Text(
-                      _entitlementError!,
-                      style: TextStyle(color: theme.colorScheme.error),
-                    )
-                  : entitlement == null
-                  ? Text(
-                      'No entitlement data available.',
-                      style: theme.textTheme.bodySmall,
-                    )
-                  : Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        if (entitlement.isFallback) ...[
-                          Container(
-                            width: double.infinity,
-                            padding: const EdgeInsets.all(12),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFFFFF7ED),
-                              borderRadius: BorderRadius.circular(16),
-                              border: Border.all(
-                                color: const Color(0xFFFBBF24),
-                              ),
-                            ),
-                            child: Row(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const Padding(
-                                  padding: EdgeInsets.only(top: 1),
-                                  child: Icon(
-                                    Icons.info_outline,
-                                    color: Color(0xFFD97706),
-                                    size: 18,
-                                  ),
-                                ),
-                                const SizedBox(width: 10),
-                                Expanded(
-                                  child: Text(
-                                    'Showing a default entitlement estimate while the live summary service is unavailable.',
-                                    style: theme.textTheme.bodySmall?.copyWith(
-                                      color: const Color(0xFF9A3412),
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(height: 12),
-                        ] else if (_entitlementError != null) ...[
-                          Container(
-                            width: double.infinity,
-                            padding: const EdgeInsets.all(12),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFFFEF2F2),
-                              borderRadius: BorderRadius.circular(16),
-                              border: Border.all(
-                                color: const Color(0xFFFECACA),
-                              ),
-                            ),
-                            child: Text(
-                              'Latest refresh failed: $_entitlementError',
-                              style: theme.textTheme.bodySmall?.copyWith(
-                                color: theme.colorScheme.error,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(height: 12),
-                        ],
-                        Container(
-                          width: double.infinity,
-                          padding: const EdgeInsets.all(18),
-                          decoration: BoxDecoration(
-                            gradient: const LinearGradient(
-                              colors: [Color(0xFFE8F8D0), Color(0xFFF7FBF1)],
-                              begin: Alignment.topLeft,
-                              end: Alignment.bottomRight,
-                            ),
-                            borderRadius: BorderRadius.circular(22),
-                            border: Border.all(color: const Color(0xFFD9E8B8)),
-                          ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          'Remaining balance',
-                                          style: theme.textTheme.bodySmall
-                                              ?.copyWith(
-                                                color: const Color(0xFF52606D),
-                                              ),
-                                        ),
-                                        const SizedBox(height: 6),
-                                        Text(
-                                          entitlement.balanceLabel,
-                                          style: theme.textTheme.headlineSmall
-                                              ?.copyWith(
-                                                fontSize: 34,
-                                                color: entitlement.balance < 0
-                                                    ? const Color(0xFFDC2626)
-                                                    : const Color(0xFF1A9C44),
-                                              ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                  Container(
-                                    width: 52,
-                                    height: 52,
-                                    decoration: BoxDecoration(
-                                      color: Colors.white.withValues(
-                                        alpha: 0.8,
-                                      ),
-                                      borderRadius: BorderRadius.circular(18),
-                                    ),
-                                    child: const Icon(
-                                      Icons.beach_access_rounded,
-                                      color: Color(0xFF84B01F),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 8),
-                              Text(
-                                entitlement.isFallback
-                                    ? 'Estimated from approved holiday already visible for ${entitlement.yearStart} to ${entitlement.yearEnd}.'
-                                    : entitlement.needsSetup
-                                    ? 'Default allowance currently shown for ${entitlement.yearStart} to ${entitlement.yearEnd} while setup completes.'
-                                    : 'Live balance for ${entitlement.yearStart} to ${entitlement.yearEnd}.',
-                                style: theme.textTheme.bodySmall,
-                              ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(height: 16),
-                        Text(
-                          'Holiday fuel gauge',
-                          style: theme.textTheme.titleMedium,
-                        ),
-                        const SizedBox(height: 10),
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(99),
-                          child: LinearProgressIndicator(
-                            minHeight: 18,
-                            value: entitlement.progressValue,
-                            backgroundColor: const Color(0xFFE2E8F0),
-                            color: const Color(0xFF94A3B8),
-                          ),
-                        ),
-                        const SizedBox(height: 10),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: Text(
-                                'Booked ${entitlement.bookedLabel}',
-                                style: theme.textTheme.bodySmall,
-                              ),
-                            ),
-                            Expanded(
-                              child: Text(
-                                'Left ${entitlement.balanceLabel}',
-                                textAlign: TextAlign.end,
-                                style: theme.textTheme.bodySmall?.copyWith(
-                                  color: entitlement.balance < 0
-                                      ? const Color(0xFFDC2626)
-                                      : const Color(0xFF1A9C44),
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 14),
-                        Wrap(
-                          spacing: 10,
-                          runSpacing: 10,
-                          children: [
-                            _entitlementMetricCard(
-                              pageContext,
-                              title: 'Entitlement',
-                              value: entitlement.totalLabel,
-                              valueColor: const Color(0xFF0F172A),
-                            ),
-                            _entitlementMetricCard(
-                              pageContext,
-                              title: 'Booked',
-                              value: entitlement.bookedLabel,
-                              valueColor: const Color(0xFFB45309),
-                            ),
-                            _entitlementMetricCard(
-                              pageContext,
-                              title: 'Balance',
-                              value: entitlement.balanceLabel,
-                              valueColor: entitlement.balance < 0
-                                  ? const Color(0xFFDC2626)
-                                  : const Color(0xFF1A9C44),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ------------------------------------------------------ My Clocking Hub
-
-  Widget _myClockingHubTab([BuildContext? viewContext]) {
-    final pageContext = viewContext ?? context;
-    final theme = Theme.of(pageContext);
-    final rateSummaries = _timesheetRateSummaries();
-    final weeklyGroups = groupTimesheetEntriesByWeek(_timesheetRows);
-    return RefreshIndicator(
-      onRefresh: _refreshTimesheets,
-      child: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(14),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('Date range', style: theme.textTheme.titleMedium),
-                  const SizedBox(height: 10),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: _TimesheetRangePreset.values.map((preset) {
-                      return ChoiceChip(
-                        label: Text(_timesheetRangePresetLabel(preset)),
-                        selected: _timesheetRangePreset == preset,
-                        onSelected: _timesheetLoading
-                            ? null
-                            : (_) => _selectTimesheetRangePreset(
-                                pageContext,
-                                preset,
-                              ),
-                      );
-                    }).toList(),
-                  ),
-                  const SizedBox(height: 10),
-                  SizedBox(
-                    width: double.infinity,
-                    height: 56,
-                    child: OutlinedButton(
-                      onPressed: () => _pickTimesheetRange(pageContext),
-                      child: Text(
-                        'Date range: ${_fmtDateForButton(_timesheetDateFrom)} to ${_fmtDateForButton(_timesheetDateTo)}',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  SizedBox(
-                    width: double.infinity,
-                    height: 56,
-                    child: ElevatedButton(
-                      onPressed: _timesheetLoading
-                          ? null
-                          : () => _refreshTimesheets(showLoader: true),
-                      child: const Text('Load timesheet'),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 12),
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(14),
-              child: _timesheetLoading
-                  ? const Center(child: CircularProgressIndicator())
-                  : _timesheetError != null
-                  ? Text(
-                      _timesheetError!,
-                      style: TextStyle(color: theme.colorScheme.error),
-                    )
-                  : _timesheetRows.isEmpty
-                  ? Text(
-                      'No timesheet rows available for this date range.',
-                      style: theme.textTheme.bodySmall,
-                    )
-                  : Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        if (rateSummaries.isNotEmpty) ...[
-                          Text(
-                            'Rate totals for this range',
-                            style: theme.textTheme.titleMedium,
-                          ),
-                          const SizedBox(height: 10),
-                          Wrap(
-                            spacing: 10,
-                            runSpacing: 10,
-                            children: rateSummaries.map((summary) {
-                              return _timesheetRateSummaryChip(
-                                pageContext,
-                                summary,
-                              );
-                            }).toList(),
-                          ),
-                          const SizedBox(height: 14),
-                        ],
-                        Text(
-                          'Tap total hours to view the rate breakdown for that day.',
-                          style: theme.textTheme.bodySmall?.copyWith(
-                            color: const Color(0xFF64748B),
-                          ),
-                        ),
-                        const SizedBox(height: 10),
-                        ...weeklyGroups.expand(
-                          (group) => [
-                            _timesheetWeekSummary(pageContext, group),
-                            const SizedBox(height: 10),
-                            timesheetHeaderRow(pageContext),
-                            const SizedBox(height: 8),
-                            ...group.entries.map(
-                              (entry) => buildTimesheetRow(
-                                pageContext,
-                                entry,
-                                onShowBreakdown: _showRateBreakdown,
-                              ),
-                            ),
-                            const SizedBox(height: 8),
-                          ],
-                        ),
-                      ],
-                    ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _pickTimesheetRange(BuildContext pickerContext) async {
-    final picked = await showDateRangePicker(
-      context: pickerContext,
-      initialDateRange: DateTimeRange(
-        start: _timesheetDateFrom,
-        end: _timesheetDateTo,
-      ),
-      firstDate: DateTime.now().subtract(const Duration(days: 365 * 2)),
-      lastDate: DateTime.now().add(const Duration(days: 365)),
-    );
-    if (picked == null || !mounted) return;
-    _applyTimesheetRange(picked, _TimesheetRangePreset.custom);
-    await _refreshTimesheets(showLoader: true);
-  }
-
-  Widget _timesheetWeekSummary(
-    BuildContext viewContext,
-    TimesheetWeekGroup group,
-  ) {
-    final theme = Theme.of(viewContext);
-    final varianceLabel = group.hasCompleteScheduledTarget
-        ? group.varianceMinutes > 0
-              ? 'Over'
-              : group.varianceMinutes < 0
-              ? 'Short'
-              : 'Variance'
-        : 'Variance';
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF1F5F9),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFCBD5E1)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            group.label,
-            style: theme.textTheme.titleSmall?.copyWith(
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 16,
-            runSpacing: 6,
-            children: [
-              Text('Paid ${group.payableLabel}'),
-              Text('Scheduled ${group.scheduledLabel}'),
-              Text('$varianceLabel ${group.varianceLabel}'),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
   List<_TimesheetRateSummary> _timesheetRateSummaries() {
     final totals = <String, int>{};
     final usageCounts = <String, int>{};
@@ -2189,373 +1054,11 @@ class EmployeeWorkspaceState extends State<EmployeeWorkspace> {
     return rows;
   }
 
-  Widget _timesheetRateSummaryChip(
-    BuildContext viewContext,
-    _TimesheetRateSummary summary,
-  ) {
-    return Container(
-      constraints: const BoxConstraints(minWidth: 120),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            summary.label,
-            style: Theme.of(
-              viewContext,
-            ).textTheme.bodySmall?.copyWith(fontWeight: FontWeight.w600),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            summary.hhmm,
-            style: Theme.of(
-              viewContext,
-            ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
-          ),
-          if (summary.uses > 0) ...[
-            const SizedBox(height: 2),
-            Text(
-              summary.useLabel,
-              style: Theme.of(
-                viewContext,
-              ).textTheme.bodySmall?.copyWith(color: const Color(0xFF64748B)),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-
-  Future<void> _showRateBreakdown(
-    BuildContext routeContext,
-    TimesheetEntry entry,
-  ) {
-    return showModalBottomSheet<void>(
-      context: routeContext,
-      showDragHandle: true,
-      builder: (ctx) {
-        return AppSheetPanel(
-          child: Padding(
-            padding: const EdgeInsets.only(top: 4),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Rate breakdown',
-                  style: Theme.of(ctx).textTheme.titleLarge,
-                ),
-                const SizedBox(height: 6),
-                Text(entry.dayLabel, style: Theme.of(ctx).textTheme.bodySmall),
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    Expanded(
-                      child: _timesheetDetailMetric(
-                        ctx,
-                        label: 'Total',
-                        value: entry.totalHours,
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: _timesheetDetailMetric(
-                        ctx,
-                        label: 'Scheduled',
-                        value: entry.hasScheduledTarget
-                            ? _minutesToHhmm(entry.scheduledMinutes)
-                            : '--:--',
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: _timesheetDetailMetric(
-                        ctx,
-                        label: entry.isOvertimeDay
-                            ? 'Over'
-                            : entry.isUnderTargetDay
-                            ? 'Short'
-                            : 'Variance',
-                        value: entry.varianceLabel ?? '00:00',
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 14),
-                ...entry.rates.map((rate) {
-                  return Padding(
-                    padding: const EdgeInsets.only(bottom: 8),
-                    child: Row(
-                      children: [
-                        Expanded(child: Text(rate.label)),
-                        Text(
-                          rate.hhmm,
-                          style: const TextStyle(fontWeight: FontWeight.w700),
-                        ),
-                      ],
-                    ),
-                  );
-                }),
-                if (entry.absenceDetails.isNotEmpty) ...[
-                  const Divider(height: 24),
-                  Text(
-                    'Paid leave',
-                    style: Theme.of(ctx).textTheme.titleMedium,
-                  ),
-                  const SizedBox(height: 8),
-                  ...entry.absenceDetails.map((detail) {
-                    return Padding(
-                      padding: const EdgeInsets.only(bottom: 8),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(detail.displayLabel),
-                                if (detail.hasDistinctType)
-                                  Text(
-                                    detail.type,
-                                    style: Theme.of(ctx).textTheme.bodySmall,
-                                  ),
-                              ],
-                            ),
-                          ),
-                          Text(
-                            detail.hhmm,
-                            style: const TextStyle(fontWeight: FontWeight.w700),
-                          ),
-                        ],
-                      ),
-                    );
-                  }),
-                ],
-                const SizedBox(height: 8),
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: TextButton(
-                    onPressed: () => Navigator.of(ctx).pop(),
-                    child: const Text('Close'),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _timesheetDetailMetric(
-    BuildContext viewContext, {
-    required String label,
-    required String value,
-  }) {
-    return Container(
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            label,
-            style: Theme.of(
-              viewContext,
-            ).textTheme.bodySmall?.copyWith(fontWeight: FontWeight.w600),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            value,
-            style: Theme.of(
-              viewContext,
-            ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
-          ),
-        ],
-      ),
-    );
-  }
-
   String _minutesToHhmm(int minutes) {
     final safeMinutes = minutes < 0 ? 0 : minutes;
     final hours = safeMinutes ~/ 60;
     final remainder = safeMinutes % 60;
     return '${hours.toString().padLeft(2, '0')}:${remainder.toString().padLeft(2, '0')}';
-  }
-
-  // ---------------------------------------------------- shared leave cards
-
-  Widget _leaveRequestList(
-    BuildContext viewContext, {
-    required List<LeaveRequest> rows,
-    required String emptyMessage,
-    bool allowActions = true,
-    bool useHistoryStatusLabel = false,
-  }) {
-    return RefreshIndicator(
-      onRefresh: _refreshLeave,
-      child: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          if (_leaveLoading)
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: 24),
-              child: Center(child: CircularProgressIndicator()),
-            )
-          else if (rows.isEmpty)
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Text(
-                  emptyMessage,
-                  style: Theme.of(viewContext).textTheme.bodySmall,
-                ),
-              ),
-            )
-          else
-            ...rows.map(
-              (request) => _buildLeaveRequestCard(
-                viewContext,
-                request,
-                allowActions: allowActions,
-                useHistoryStatusLabel: useHistoryStatusLabel,
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildLeaveRequestCard(
-    BuildContext viewContext,
-    LeaveRequest request, {
-    bool allowActions = true,
-    bool useHistoryStatusLabel = false,
-  }) {
-    final actionBusy = _leaveActionRequestId == request.requestId;
-    final showActions = allowActions && !request.isHistoryRejected;
-    final showCancelAction =
-        showActions && request.canCancel && !request.hasPendingRemovalWorkflow;
-    final showRemovalAction =
-        showActions &&
-        request.canRequestRemoval &&
-        !request.hasPendingRemovalWorkflow;
-    final statusLabel = useHistoryStatusLabel
-        ? request.historyStatusLabel
-        : request.activeStatusLabel;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: Card(
-        child: Padding(
-          padding: const EdgeInsets.all(14),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      request.dateRangeText,
-                      style: Theme.of(viewContext).textTheme.titleMedium,
-                    ),
-                  ),
-                  _statusChip(statusLabel),
-                ],
-              ),
-              const SizedBox(height: 6),
-              Text('Group: ${request.groupName}'),
-              Text(
-                'Subtype: ${request.subtypeName.isEmpty ? '-' : request.subtypeName}',
-              ),
-              Text('Day part: ${request.dayPartLabel}'),
-              if ((request.timeRangeText ?? '').isNotEmpty)
-                Text('Time: ${request.timeRangeText}'),
-              if (request.hasAttachment) const Text('Attachment: Included'),
-              if ((request.removalStatusText ?? '').isNotEmpty)
-                Text('Removal: ${request.removalStatusText}'),
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  if (showCancelAction)
-                    OutlinedButton(
-                      onPressed: actionBusy
-                          ? null
-                          : () => _cancelLeaveRequest(viewContext, request),
-                      child: actionBusy
-                          ? const SizedBox(
-                              width: 14,
-                              height: 14,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Text('Cancel'),
-                    ),
-                  if (showRemovalAction) ...[
-                    if (showCancelAction) const SizedBox(width: 8),
-                    OutlinedButton(
-                      onPressed: actionBusy
-                          ? null
-                          : () => _requestLeaveRemoval(viewContext, request),
-                      child: const Text('Request removal'),
-                    ),
-                  ],
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _entitlementMetricCard(
-    BuildContext viewContext, {
-    required String title,
-    required String value,
-    required Color valueColor,
-  }) {
-    return SizedBox(
-      width: 150,
-      height: 78,
-      child: Container(
-        padding: const EdgeInsets.all(10),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: const Color(0xFFE2E8F0)),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              title,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: Theme.of(
-                viewContext,
-              ).textTheme.bodySmall?.copyWith(color: const Color(0xFF64748B)),
-            ),
-            const Spacer(),
-            Text(
-              value,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: Theme.of(viewContext).textTheme.titleMedium?.copyWith(
-                color: valueColor,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
   }
 
   bool _isApprovedRequest(LeaveRequest request) => request.isHistoryApproved;
@@ -2763,7 +1266,11 @@ class _FeatureTile extends StatelessWidget {
                   color: const Color(0xFFEAF5DA),
                   borderRadius: BorderRadius.circular(18),
                 ),
-                child: Icon(info.icon, size: 30, color: const Color(0xFF102F08)),
+                child: Icon(
+                  info.icon,
+                  size: 30,
+                  color: const Color(0xFF102F08),
+                ),
               ),
               const SizedBox(width: 16),
               Expanded(
@@ -2797,106 +1304,6 @@ class _FeatureTile extends StatelessWidget {
   }
 }
 
-/// Timesheet table header, shared with the required sign-off screen.
-Widget timesheetHeaderRow(BuildContext viewContext) {
-  TextStyle style() => Theme.of(
-    viewContext,
-  ).textTheme.bodySmall!.copyWith(fontWeight: FontWeight.w700);
-  return Row(
-    children: [
-      Expanded(flex: 3, child: Text('Day', style: style())),
-      Expanded(flex: 2, child: Text('Paid in', style: style())),
-      Expanded(flex: 2, child: Text('Paid out', style: style())),
-      Expanded(flex: 2, child: Text('Total hours', style: style())),
-    ],
-  );
-}
-
-/// One timesheet day, as in the employee app's Clocking Hub.
-Widget buildTimesheetRow(
-  BuildContext viewContext,
-  TimesheetEntry entry, {
-  Future<void> Function(BuildContext, TimesheetEntry)? onShowBreakdown,
-}) {
-  final isOvertime = entry.isOvertimeDay;
-  final isUnderTarget = entry.isUnderTargetDay;
-  final absenceLabel = entry.absenceLabel;
-  final showAbsenceLabel = entry.shouldShowAbsenceLabelInline;
-  final rowFill = isOvertime
-      ? const Color(0xFFE9F9EE)
-      : isUnderTarget
-      ? const Color(0xFFFFECEC)
-      : Colors.white;
-  final rowBorder = isOvertime
-      ? const Color(0xFF9ACC3B)
-      : isUnderTarget
-      ? const Color(0xFFE57373)
-      : const Color(0xFFE2E8F0);
-  final canBreakdown = entry.hasRateBreakdown && onShowBreakdown != null;
-  final totalTextStyle = TextStyle(
-    color: canBreakdown ? const Color(0xFF0F766E) : const Color(0xFF1E2433),
-    fontWeight: FontWeight.w700,
-    decoration: canBreakdown ? TextDecoration.underline : null,
-  );
-  final total = canBreakdown
-      ? InkWell(
-          onTap: () => onShowBreakdown(viewContext, entry),
-          child: Text(entry.totalHours, style: totalTextStyle),
-        )
-      : Text(entry.totalHours, style: totalTextStyle);
-
-  return Container(
-    margin: const EdgeInsets.only(bottom: 8),
-    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-    decoration: BoxDecoration(
-      color: rowFill,
-      borderRadius: BorderRadius.circular(14),
-      border: Border.all(color: rowBorder),
-    ),
-    child: Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Expanded(
-          flex: 3,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(entry.dayLabel),
-              if (entry.status.trim().isNotEmpty)
-                Text(
-                  entry.status,
-                  style: Theme.of(viewContext).textTheme.bodySmall,
-                ),
-              if (showAbsenceLabel)
-                Text(
-                  absenceLabel!,
-                  style: Theme.of(viewContext).textTheme.bodySmall?.copyWith(
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              if (entry.varianceLabel != null)
-                Text(
-                  entry.isOvertimeDay
-                      ? 'Over target ${entry.varianceLabel}'
-                      : 'Under target ${entry.varianceLabel}',
-                  style: Theme.of(viewContext).textTheme.bodySmall?.copyWith(
-                    color: entry.isOvertimeDay
-                        ? const Color(0xFF0F766E)
-                        : const Color(0xFFB91C1C),
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-            ],
-          ),
-        ),
-        Expanded(flex: 2, child: Text(entry.clockIn)),
-        Expanded(flex: 2, child: Text(entry.clockOut)),
-        Expanded(flex: 2, child: total),
-      ],
-    ),
-  );
-}
-
 class _MenuDetailPage extends StatelessWidget {
   const _MenuDetailPage({
     required this.title,
@@ -2911,24 +1318,61 @@ class _MenuDetailPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        toolbarHeight: 64,
-        leadingWidth: 132,
-        automaticallyImplyLeading: false,
-        leading: Padding(
-          padding: const EdgeInsets.only(left: 12),
-          child: TextButton.icon(
-            key: const Key('page-back'),
-            onPressed: () => Navigator.of(context).maybePop(),
-            icon: const Icon(Icons.arrow_back),
-            label: const Text('Back'),
-          ),
+      backgroundColor: kKioskBg,
+      body: SafeArea(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Container(
+              height: 76,
+              color: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 24),
+              child: Row(
+                children: [
+                  SizedBox(
+                    height: 56,
+                    child: OutlinedButton.icon(
+                      key: const Key('page-back'),
+                      onPressed: () => Navigator.of(context).maybePop(),
+                      style: OutlinedButton.styleFrom(
+                        textStyle: const TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w700,
+                        ),
+                        padding: const EdgeInsets.symmetric(horizontal: 20),
+                      ),
+                      icon: const Icon(Icons.arrow_back_rounded, size: 26),
+                      label: const Text('Back'),
+                    ),
+                  ),
+                  const SizedBox(width: 20),
+                  Expanded(
+                    child: Text(
+                      title,
+                      key: const Key('page-title'),
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 28,
+                        fontWeight: FontWeight.w800,
+                        color: kKioskText,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1),
+            Expanded(
+              child: Theme(
+                data: kioskPageTheme(Theme.of(context)),
+                child: ValueListenableBuilder<int>(
+                  valueListenable: refreshListenable,
+                  builder: (context, _, _) => builder(context),
+                ),
+              ),
+            ),
+          ],
         ),
-        title: Text(title),
-      ),
-      body: ValueListenableBuilder<int>(
-        valueListenable: refreshListenable,
-        builder: (context, _, _) => SafeArea(child: builder(context)),
       ),
     );
   }
@@ -3074,8 +1518,7 @@ class _RemovalRequestDialogState extends State<_RemovalRequestDialog> {
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          _attachment?.fileName ??
-                              'Optional photo, max 10MB.',
+                          _attachment?.fileName ?? 'Optional photo, max 10MB.',
                           overflow: TextOverflow.ellipsis,
                           style: theme.textTheme.bodySmall,
                         ),
