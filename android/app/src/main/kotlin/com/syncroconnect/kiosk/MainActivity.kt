@@ -57,13 +57,20 @@ class MainActivity : FlutterActivity() {
         }
     }
 
-    private fun repinIfNeeded() {
+    // Android shows its own "App is pinned" message on every pin and waits for
+    // Got it, so a pin is asked for once and then left alone for a while;
+    // asking again every check made that message flash on and off.
+    private var lastPinRequestAt = 0L
+
+    private fun repinIfNeeded(force: Boolean = false) {
         if (kioskSuspended || isDeviceOwner()) return
-        if (lockState() == "none") {
-            try {
-                startLockTask()
-            } catch (_: Exception) {
-            }
+        if (lockState() != "none") return
+        val now = System.currentTimeMillis()
+        if (!force && now - lastPinRequestAt < 15000) return
+        lastPinRequestAt = now
+        try {
+            startLockTask()
+        } catch (_: Exception) {
         }
     }
 
@@ -135,7 +142,7 @@ class MainActivity : FlutterActivity() {
                         if (isDeviceOwner()) {
                             enterDedicatedMode()
                         } else {
-                            repinIfNeeded()
+                            repinIfNeeded(force = true)
                         }
                         result.success(kioskStatus())
                     }
