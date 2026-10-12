@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Device owner needs a device admin receiver. Lock task, status bar,
+     keyguard and preferred-launcher policies come from device ownership, so
+     no extra admin policies are requested. -->
+<device-admin xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-policies />
+</device-admin>

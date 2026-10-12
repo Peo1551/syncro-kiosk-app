@@ -48,6 +48,44 @@ Android application id and iOS bundle id: `com.syncroconnect.kiosk`.
 For full lock-down use Android screen pinning / device-owner kiosk mode, or
 iPad Guided Access / MDM Single App Mode.
 
+## Dedicated kiosk setup (Android)
+
+On a normal tablet the app runs full screen and an admin can turn on screen
+pinning from tablet settings. Screen pinning can be undone by anyone who knows
+the Back + Overview gesture. For a tablet that cannot be left, set it up as a
+dedicated kiosk: the app becomes the tablet's device owner, locks itself in on
+every start (no Home, Recents, notifications or pinning hint), and becomes the
+home screen so it comes back after a restart.
+
+1. Start with a tablet that has **no accounts**: a new tablet, or factory reset
+   it. During setup skip Google sign-in and do not add any account.
+2. Turn on Developer options (Settings › About tablet › tap Build number seven
+   times) and turn on **USB debugging**.
+3. Install the Syncro Kiosk app.
+4. Connect the tablet by USB and run:
+
+   ```sh
+   adb shell dpm set-device-owner com.syncroconnect.kiosk/.KioskAdminReceiver
+   ```
+
+   It should reply `Success: Device owner set to package ...`. If it says
+   there are accounts on the device, remove them (or factory reset) and try
+   again.
+5. Open the app. It locks itself in straight away.
+
+Tablet settings (admin PIN) then shows **Kiosk lock: Locked (dedicated
+device)** with two extra buttons:
+
+- **Exit kiosk mode** unlocks the tablet while the admin is in settings. It
+  locks again when the admin taps Return to kiosk, when settings time out, or
+  when the app is next opened.
+- **Release this tablet** turns off dedicated mode for good and returns the
+  tablet to normal use. To make it a dedicated kiosk again it must be factory
+  reset, or set up again with the command above.
+
+QR-code or zero-touch provisioning (setting up many tablets without a cable)
+is a possible future option and is not set up yet.
+
 ## Server API
 
 The base URL is set in `lib/src/config/app_config.dart`

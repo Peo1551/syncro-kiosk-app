@@ -153,12 +153,22 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
   bool _confirmUnpair = false;
   KioskStatus? _kiosk;
 
+  /// True once the admin has exited kiosk mode here; leaving settings by any
+  /// route (Return to kiosk, idle time-out, unpair) locks the tablet again.
+  bool _exitedKiosk = false;
+
   KioskController get c => widget.controller;
 
   @override
   void initState() {
     super.initState();
     unawaited(_loadKioskStatus());
+  }
+
+  @override
+  void dispose() {
+    if (_exitedKiosk) unawaited(KioskService.resumeKioskMode());
+    super.dispose();
   }
 
   Future<void> _loadKioskStatus() async {
@@ -171,6 +181,50 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
     if (mounted) setState(() => _kiosk = status);
   }
 
+  Future<void> _exitKiosk() async {
+    _exitedKiosk = true;
+    final status = await KioskService.exitKioskMode();
+    if (mounted) setState(() => _kiosk = status);
+  }
+
+  Future<void> _releaseTablet() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Release this tablet?'),
+        content: const Text(
+          'This turns off dedicated kiosk mode and returns the tablet to '
+          'normal use. To make it a dedicated kiosk again, the tablet must be '
+          'factory reset or set up again with the setup command.',
+        ),
+        actions: [
+          TextButton(
+            key: const Key('admin-release-cancel'),
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            key: const Key('admin-release-confirm'),
+            style: FilledButton.styleFrom(backgroundColor: kDanger),
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Release tablet'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    final status = await KioskService.releaseDeviceOwner();
+    if (mounted) setState(() => _kiosk = status);
+  }
+
+  String _kioskLockText() {
+    final kiosk = _kiosk;
+    if (kiosk == null) return 'Checking…';
+    // iPad and other platforms keep their own explanation.
+    if (!kiosk.lockTaskAvailable) return kiosk.message;
+    return kiosk.lockState.label;
+  }
+
   Widget _row(String label, String value) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 10),
@@ -180,7 +234,10 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
             width: 180,
             child: Text(
               label,
-              style: const TextStyle(color: kMuted, fontWeight: FontWeight.w600),
+              style: const TextStyle(
+                color: kMuted,
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ),
           Expanded(
@@ -241,7 +298,7 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
                           key: const Key('admin-back'),
                           onPressed: c.goWake,
                           icon: const Icon(Icons.arrow_back),
-                          label: const Text('Back to kiosk'),
+                          label: const Text('Return to kiosk'),
                         ),
                       ),
                     ],
@@ -260,7 +317,7 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
                             '${c.tabletIdleSeconds} seconds idle',
                           ),
                           _row('App version', c.appVersion),
-                          _row('Kiosk lock', _kiosk?.message ?? 'Checking…'),
+                          _row('Kiosk lock', _kioskLockText()),
                         ],
                       ),
                     ),
@@ -268,10 +325,53 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
                   const SizedBox(height: 16),
                   if (_kiosk != null &&
                       _kiosk!.lockTaskAvailable &&
+                      (!_kiosk!.isDeviceOwner ||
+                          _kiosk!.lockState == KioskLockState.none)) ...[
+                    Text(
+                      _kiosk!.message,
+                      key: const Key('admin-kiosk-help'),
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: kMuted,
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                  ],
+                  if (_kiosk != null && _kiosk!.isDeviceOwner) ...[
+                    if (_kiosk!.lockState != KioskLockState.none) ...[
+                      SizedBox(
+                        height: 60,
+                        child: OutlinedButton.icon(
+                          key: const Key('admin-exit-kiosk'),
+                          onPressed: () => unawaited(_exitKiosk()),
+                          icon: const Icon(Icons.lock_open_outlined),
+                          label: const Text('Exit kiosk mode'),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                    ],
+                    SizedBox(
+                      height: 60,
+                      child: OutlinedButton.icon(
+                        key: const Key('admin-release-tablet'),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: kDanger,
+                          side: const BorderSide(color: kDanger),
+                        ),
+                        onPressed: () => unawaited(_releaseTablet()),
+                        icon: const Icon(Icons.phonelink_erase_outlined),
+                        label: const Text('Release this tablet'),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                  ],
+                  if (_kiosk != null &&
+                      _kiosk!.lockTaskAvailable &&
+                      !_kiosk!.isDeviceOwner &&
                       !_kiosk!.lockTaskActive) ...[
                     SizedBox(
                       height: 60,
                       child: OutlinedButton.icon(
+                        key: const Key('admin-pin-tablet'),
                         onPressed: () => unawaited(_lockTablet()),
                         icon: const Icon(Icons.lock_outline),
                         label: const Text('Lock tablet to this app'),
