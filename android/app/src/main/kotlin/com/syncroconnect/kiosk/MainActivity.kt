@@ -7,10 +7,12 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.provider.Settings
 import android.view.View
 import android.view.WindowManager
 import io.flutter.embedding.android.FlutterActivity
@@ -21,8 +23,12 @@ import io.flutter.plugin.common.MethodChannel
 // hide system bars, and offer Android lock task.
 //
 // Two levels of lock:
-// - Normal tablet: the admin can turn on screen pinning from tablet settings
-//   (startLockTask). Nothing happens automatically.
+// - Normal tablet: the app pins itself (startLockTask) whenever it is on
+//   screen, and if it is closed anyway it brings itself back after a moment
+//   (needs "Display over other apps", which lets it start from the
+//   background). The admin can also make it the home screen. Exit kiosk mode
+//   (admin PIN) stops all of this until the admin returns to the kiosk or the
+//   app is reopened after being closed.
 // - Dedicated tablet (this app is the device owner): on every resume the app
 //   enters full lock task mode with no Home, Recents, notifications or global
 //   actions, disables the status bar and keyguard, and becomes the home
@@ -34,9 +40,32 @@ class MainActivity : FlutterActivity() {
 
     companion object {
         // Set when the admin exits kiosk mode from tablet settings, so the app
-        // does not re-lock while they are still there. Cleared when the app
-        // leaves the foreground or the admin returns to the kiosk.
+        // does not re-lock while they are still there or using another app.
+        // Cleared when the admin returns to the kiosk, or when the app is
+        // reopened after it was closed (stopped) while suspended.
         private var kioskSuspended = false
+
+        // The app was stopped while suspended: the next resume re-locks.
+        private var stoppedWhileSuspended = false
+
+        // Dart is running another app on purpose (the camera for a leave
+        // photo). Until then (a safety limit), no reopen and no re-pin.
+        private var externalUntil = 0L
+
+        // Android settings opened from tablet settings; cleared when the kiosk
+        // comes back. No reopen, no re-pin and no end of suspension for it,
+        // up to a safety limit.
+        private var settingsUntil = 0L
+
+        // Tablet settings (admin screen) is showing: the periodic check does
+        // not pin underneath the admin.
+        private var adminOpen = false
+
+        private const val prefsName = "syncro_kiosk_native"
+        private const val prefHomeChosen = "ordinary_home_chosen"
+        private const val returnDelayMs = 2000L
+        private const val externalLimitMs = 10 * 60 * 1000L
+        private const val settingsLimitMs = 5 * 60 * 1000L
     }
 
     private val dpm: DevicePolicyManager
@@ -52,7 +81,7 @@ class MainActivity : FlutterActivity() {
     private val repinHandler = Handler(Looper.getMainLooper())
     private val repinCheck = object : Runnable {
         override fun run() {
-            repinIfNeeded()
+            if (!adminOpen) repinIfNeeded()
             repinHandler.postDelayed(this, 1500)
         }
     }
@@ -62,11 +91,23 @@ class MainActivity : FlutterActivity() {
     // asking again every check made that message flash on and off.
     private var lastPinRequestAt = 0L
 
+    private fun externalExpected(): Boolean =
+        System.currentTimeMillis() < externalUntil
+
+    private fun settingsOpen(): Boolean =
+        System.currentTimeMillis() < settingsUntil
+
+    // Another app is expected on screen (camera or Android settings).
+    private fun holdingOpen(): Boolean = externalExpected() || settingsOpen()
+
     private fun repinIfNeeded(force: Boolean = false) {
         if (kioskSuspended || isDeviceOwner()) return
+        if (holdingOpen()) return
         if (lockState() != "none") return
         val now = System.currentTimeMillis()
-        if (!force && now - lastPinRequestAt < 15000) return
+        // A forced request skips the long wait, but never asks twice within a
+        // few seconds while Android is still showing its pinned message.
+        if (now - lastPinRequestAt < (if (force) 3000 else 15000)) return
         lastPinRequestAt = now
         try {
             startLockTask()
@@ -77,6 +118,31 @@ class MainActivity : FlutterActivity() {
     private val homeAlias: ComponentName
         get() = ComponentName(packageName, "$packageName.KioskHomeAlias")
 
+    // Normal tablet: if the kiosk is closed (Home, Recents, another app), bring
+    // it back after a moment. Android only lets an app start itself from the
+    // background when it holds "Display over other apps".
+    private val returnHandler = Handler(Looper.getMainLooper())
+    private val returnToKiosk = Runnable {
+        if (kioskSuspended || isDeviceOwner() || holdingOpen()) {
+            return@Runnable
+        }
+        if (!canReturn()) return@Runnable
+        try {
+            applicationContext.startActivity(
+                Intent(applicationContext, MainActivity::class.java).addFlags(
+                    Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+                )
+            )
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun canReturn(): Boolean = try {
+        Settings.canDrawOverlays(this)
+    } catch (_: Exception) {
+        false
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         applySoftKioskFlags()
@@ -84,16 +150,29 @@ class MainActivity : FlutterActivity() {
 
     override fun onResume() {
         super.onResume()
+        returnHandler.removeCallbacks(returnToKiosk)
         applySoftKioskFlags()
-        if (isDeviceOwner() && !kioskSuspended) {
-            try {
-                enterDedicatedMode()
-            } catch (_: Exception) {
-                // Never crash the kiosk over a lock-down failure.
+        val backFromSettings = settingsOpen()
+        settingsUntil = 0L
+        // Reopened after the admin's exit and leaving the app: lock again.
+        if (stoppedWhileSuspended) {
+            stoppedWhileSuspended = false
+            kioskSuspended = false
+        }
+        if (isDeviceOwner()) {
+            if (!kioskSuspended) {
+                try {
+                    enterDedicatedMode()
+                } catch (_: Exception) {
+                    // Never crash the kiosk over a lock-down failure.
+                }
             }
+        } else if (!backFromSettings) {
+            // Pin straight away when coming back, not after the throttle.
+            repinIfNeeded(force = true)
         }
         repinHandler.removeCallbacks(repinCheck)
-        repinHandler.post(repinCheck)
+        repinHandler.postDelayed(repinCheck, 1500)
     }
 
     override fun onPause() {
@@ -103,8 +182,21 @@ class MainActivity : FlutterActivity() {
 
     override fun onStop() {
         super.onStop()
-        // Leaving the app ends an admin's exit; it re-locks when reopened.
-        kioskSuspended = false
+        if (isChangingConfigurations) return
+        if (kioskSuspended) {
+            // The admin exited and then left the app: it re-locks when
+            // reopened. Opening the camera or Android settings does not count.
+            if (!holdingOpen()) stoppedWhileSuspended = true
+            return
+        }
+        if (isDeviceOwner()) return
+        // Camera or Android settings expected: come back only if they are
+        // still open after their safety limit.
+        val now = System.currentTimeMillis()
+        val holdUntil = maxOf(externalUntil, settingsUntil)
+        val delay = if (holdUntil > now) holdUntil - now + returnDelayMs else returnDelayMs
+        returnHandler.removeCallbacks(returnToKiosk)
+        returnHandler.postDelayed(returnToKiosk, delay)
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -117,16 +209,20 @@ class MainActivity : FlutterActivity() {
                     "lockState" -> result.success(lockState())
                     "startLockTask" -> {
                         applySoftKioskFlags()
+                        kioskSuspended = false
+                        stoppedWhileSuspended = false
                         if (isDeviceOwner()) {
-                            kioskSuspended = false
                             enterDedicatedMode()
                         } else {
+                            lastPinRequestAt = System.currentTimeMillis()
                             startLockTask()
                         }
                         result.success(kioskStatus())
                     }
                     "exitKioskMode" -> {
                         kioskSuspended = true
+                        stoppedWhileSuspended = false
+                        returnHandler.removeCallbacks(returnToKiosk)
                         if (isDeviceOwner()) {
                             exitDedicatedMode()
                         } else {
@@ -139,6 +235,8 @@ class MainActivity : FlutterActivity() {
                     }
                     "resumeKioskMode" -> {
                         kioskSuspended = false
+                        stoppedWhileSuspended = false
+                        adminOpen = false
                         if (isDeviceOwner()) {
                             enterDedicatedMode()
                         } else {
@@ -159,12 +257,94 @@ class MainActivity : FlutterActivity() {
                         }
                         result.success(kioskStatus())
                     }
+                    "setAdminOpen" -> {
+                        adminOpen = call.argument<Boolean>("open") == true
+                        if (!adminOpen) repinIfNeeded(force = true)
+                        result.success(kioskStatus())
+                    }
+                    "beginExternalActivity" -> {
+                        externalUntil = System.currentTimeMillis() + externalLimitMs
+                        returnHandler.removeCallbacks(returnToKiosk)
+                        // Screen pinning stops another app (the camera)
+                        // opening, so unpin for it on a normal tablet. A
+                        // dedicated tablet is left as it is.
+                        if (call.argument<Boolean>("unpin") == true &&
+                            !isDeviceOwner() && lockState() == "pinned"
+                        ) {
+                            try {
+                                stopLockTask()
+                            } catch (_: Exception) {
+                            }
+                        }
+                        result.success(kioskStatus())
+                    }
+                    "endExternalActivity" -> {
+                        externalUntil = 0L
+                        if (!adminOpen) repinIfNeeded(force = true)
+                        result.success(kioskStatus())
+                    }
+                    "openOverlaySettings" -> {
+                        openSettings(
+                            Intent(
+                                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                Uri.parse("package:$packageName")
+                            )
+                        )
+                        result.success(kioskStatus())
+                    }
+                    "setHomeApp" -> {
+                        if (!isDeviceOwner()) {
+                            val on = call.argument<Boolean>("enabled") == true
+                            getSharedPreferences(prefsName, Context.MODE_PRIVATE)
+                                .edit().putBoolean(prefHomeChosen, on).apply()
+                            packageManager.setComponentEnabledSetting(
+                                homeAlias,
+                                if (on) PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+                                else PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+                                PackageManager.DONT_KILL_APP
+                            )
+                            openSettings(Intent(Settings.ACTION_HOME_SETTINGS))
+                        }
+                        result.success(kioskStatus())
+                    }
+                    "isHomeApp" -> result.success(isHomeApp())
                     else -> result.notImplemented()
                 }
             } catch (e: Exception) {
                 result.success(kioskStatus() + mapOf("error" to (e.message ?: "Kiosk request failed.")))
             }
         }
+    }
+
+    // Opens an Android settings screen for the admin. Pinning would block it,
+    // so a normal tablet unpins first; nothing reopens or re-pins until the
+    // kiosk is back on screen.
+    private fun openSettings(intent: Intent) {
+        settingsUntil = System.currentTimeMillis() + settingsLimitMs
+        returnHandler.removeCallbacks(returnToKiosk)
+        if (!isDeviceOwner() && lockState() == "pinned") {
+            try {
+                stopLockTask()
+            } catch (_: Exception) {
+            }
+        }
+        try {
+            startActivity(intent)
+        } catch (_: Exception) {
+            try {
+                startActivity(Intent(Settings.ACTION_SETTINGS))
+            } catch (_: Exception) {
+                settingsUntil = 0L
+            }
+        }
+    }
+
+    private fun isHomeApp(): Boolean = try {
+        val home = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
+        packageManager.resolveActivity(home, PackageManager.MATCH_DEFAULT_ONLY)
+            ?.activityInfo?.packageName == packageName
+    } catch (_: Exception) {
+        false
     }
 
     private fun isDeviceOwner(): Boolean = try {
@@ -208,11 +388,16 @@ class MainActivity : FlutterActivity() {
         dpm.setStatusBarDisabled(admin, false)
         dpm.setKeyguardDisabled(admin, false)
         dpm.clearPackagePersistentPreferredActivities(admin, packageName)
-        packageManager.setComponentEnabledSetting(
-            homeAlias,
-            PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
-            PackageManager.DONT_KILL_APP
-        )
+        // Keep the home screen entry if the admin chose it on a normal tablet.
+        val homeChosen = getSharedPreferences(prefsName, Context.MODE_PRIVATE)
+            .getBoolean(prefHomeChosen, false)
+        if (!homeChosen) {
+            packageManager.setComponentEnabledSetting(
+                homeAlias,
+                PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+                PackageManager.DONT_KILL_APP
+            )
+        }
     }
 
     private fun lockState(): String {
@@ -250,7 +435,10 @@ class MainActivity : FlutterActivity() {
             "lockTaskPermitted" to permitted,
             "lockTaskState" to lockTaskState,
             "lockState" to lockState(),
-            "isDeviceOwner" to isDeviceOwner()
+            "isDeviceOwner" to isDeviceOwner(),
+            "suspended" to kioskSuspended,
+            "canReturn" to canReturn(),
+            "isHomeApp" to isHomeApp()
         )
     }
 }

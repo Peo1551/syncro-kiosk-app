@@ -16,6 +16,7 @@ import '../../core/http/api_client.dart';
 import '../../core/session.dart';
 import '../../core/widgets/app_modal.dart';
 import '../../core/widgets/kiosk_ui.dart';
+import '../../kiosk/kiosk_service.dart';
 import '../flexi/data/flexi_api.dart';
 import '../flexi/models/flexi_summary.dart';
 import '../flexi/presentation/my_flexi_page.dart';
@@ -632,7 +633,16 @@ class EmployeeWorkspaceState extends State<EmployeeWorkspace> {
 
   /// Kiosk: camera only. A shared tablet must not offer its file store, and
   /// the photo is read into memory and its temporary file deleted at once.
-  Future<LeaveAttachment?> _pickAttachment(BuildContext routeContext) async {
+  ///
+  /// The camera is another app: the kiosk is told to expect it, so it neither
+  /// reopens itself over the camera nor stays pinned (which would block it).
+  Future<LeaveAttachment?> _pickAttachment(BuildContext routeContext) =>
+      KioskService.duringExternalActivity(
+        () => _takeAttachment(routeContext),
+        unpin: true,
+      );
+
+  Future<LeaveAttachment?> _takeAttachment(BuildContext routeContext) async {
     final custom = widget.takePhoto;
     if (custom != null) return custom();
     try {

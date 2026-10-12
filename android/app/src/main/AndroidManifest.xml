@@ -1,6 +1,9 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.CAMERA" />
+    <!-- "Display over other apps": lets a normal tablet bring the kiosk back
+         from the background if it is closed. Granted by the admin. -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
     <application
         android:label="Syncro Kiosk"
@@ -29,10 +32,10 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
-        <!-- Home launcher entry, used only on a dedicated (device owner)
-             tablet. Disabled by default so a normal tablet never offers the
-             kiosk as a launcher; MainActivity enables it when it is the
-             device owner and disables it again when kiosk mode is exited. -->
+        <!-- Home launcher entry. Disabled by default so a tablet never offers
+             the kiosk as a launcher unasked. A dedicated (device owner) tablet
+             enables it while locked; on a normal tablet the admin turns it on
+             or off from tablet settings (Make kiosk the home screen). -->
         <activity-alias
             android:name=".KioskHomeAlias"
             android:targetActivity=".MainActivity"
@@ -69,6 +72,10 @@
         </intent>
         <intent>
             <action android:name="android.media.action.IMAGE_CAPTURE" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.HOME" />
         </intent>
     </queries>
 </manifest>

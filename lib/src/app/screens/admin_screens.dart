@@ -149,7 +149,8 @@ class AdminSettingsScreen extends StatefulWidget {
   State<AdminSettingsScreen> createState() => _AdminSettingsScreenState();
 }
 
-class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
+class _AdminSettingsScreenState extends State<AdminSettingsScreen>
+    with WidgetsBindingObserver {
   bool _confirmUnpair = false;
   KioskStatus? _kiosk;
 
@@ -162,13 +163,26 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    unawaited(KioskService.setAdminOpen(true));
     unawaited(_loadKioskStatus());
   }
 
   @override
   void dispose() {
-    if (_exitedKiosk) unawaited(KioskService.resumeKioskMode());
+    WidgetsBinding.instance.removeObserver(this);
+    if (_exitedKiosk) {
+      unawaited(KioskService.resumeKioskMode());
+    } else {
+      unawaited(KioskService.setAdminOpen(false));
+    }
     super.dispose();
+  }
+
+  /// Back from an Android settings page: show what the admin changed there.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) unawaited(_loadKioskStatus());
   }
 
   Future<void> _loadKioskStatus() async {
@@ -185,6 +199,22 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
     _exitedKiosk = true;
     final status = await KioskService.exitKioskMode();
     if (mounted) setState(() => _kiosk = status);
+  }
+
+  Future<void> _allowReturn() async {
+    final status = await KioskService.openReturnPermission();
+    if (mounted) setState(() => _kiosk = status);
+  }
+
+  Future<void> _setHomeApp(bool enabled) async {
+    final status = await KioskService.setHomeApp(enabled);
+    if (mounted) setState(() => _kiosk = status);
+  }
+
+  /// A normal (not dedicated) Android tablet.
+  bool get _ordinaryTablet {
+    final kiosk = _kiosk;
+    return kiosk != null && kiosk.lockTaskAvailable && !kiosk.isDeviceOwner;
   }
 
   Future<void> _releaseTablet() async {
@@ -318,6 +348,16 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
                           ),
                           _row('App version', c.appVersion),
                           _row('Kiosk lock', _kioskLockText()),
+                          if (_ordinaryTablet) ...[
+                            _row(
+                              'Reopen if closed',
+                              _kiosk!.canReturn ? 'On' : 'Needs permission',
+                            ),
+                            _row(
+                              'Home screen',
+                              _kiosk!.isHomeApp ? 'Syncro Kiosk' : 'Normal',
+                            ),
+                          ],
                         ],
                       ),
                     ),
@@ -338,7 +378,8 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
                   ],
                   if (_kiosk != null &&
                       _kiosk!.lockTaskAvailable &&
-                      _kiosk!.lockState != KioskLockState.none) ...[
+                      (_kiosk!.lockState != KioskLockState.none ||
+                          (!_kiosk!.isDeviceOwner && !_kiosk!.suspended))) ...[
                     SizedBox(
                       height: 60,
                       child: OutlinedButton.icon(
@@ -346,6 +387,35 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
                         onPressed: () => unawaited(_exitKiosk()),
                         icon: const Icon(Icons.lock_open_outlined),
                         label: const Text('Exit kiosk mode'),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                  ],
+                  if (_ordinaryTablet && !_kiosk!.canReturn) ...[
+                    SizedBox(
+                      height: 60,
+                      child: OutlinedButton.icon(
+                        key: const Key('admin-allow-return'),
+                        onPressed: () => unawaited(_allowReturn()),
+                        icon: const Icon(Icons.replay_outlined),
+                        label: const Text('Allow kiosk to reopen itself'),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                  ],
+                  if (_ordinaryTablet) ...[
+                    SizedBox(
+                      height: 60,
+                      child: OutlinedButton.icon(
+                        key: const Key('admin-home-app'),
+                        onPressed: () =>
+                            unawaited(_setHomeApp(!_kiosk!.isHomeApp)),
+                        icon: const Icon(Icons.home_outlined),
+                        label: Text(
+                          _kiosk!.isHomeApp
+                              ? 'Use normal home screen'
+                              : 'Make kiosk the home screen',
+                        ),
                       ),
                     ),
                     const SizedBox(height: 12),

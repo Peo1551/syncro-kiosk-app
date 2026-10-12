@@ -38,8 +38,16 @@ class KioskStatus {
     this.lockTaskActive = false,
     this.isDeviceOwner = false,
     this.lockState = KioskLockState.none,
+    this.suspended = false,
+    this.canReturn = false,
+    this.isHomeApp = false,
     this.message = 'Soft kiosk active.',
   });
+
+  static const exitedMessage =
+      'Kiosk lock is off until you return to the kiosk or reopen the app.';
+  static const dedicatedHint =
+      'For a fully locked tablet, set it up as a dedicated kiosk (see setup guide).';
 
   /// Builds the status from the Android `status` reply.
   factory KioskStatus.fromAndroid(Map<String, dynamic>? raw) {
@@ -50,20 +58,23 @@ class KioskStatus {
       state = KioskLockState.pinned;
     }
     final active = state != KioskLockState.none;
+    final suspended = raw?['suspended'] == true;
     final String message;
     if (owner) {
       message = state == KioskLockState.none
           ? 'Kiosk mode is paused. It locks again when you return to the kiosk.'
           : 'This tablet is a dedicated kiosk.';
     } else {
-      message =
-          'To lock this tablet fully, set it up as a dedicated kiosk (see setup guide).';
+      message = suspended ? exitedMessage : dedicatedHint;
     }
     return KioskStatus(
       lockTaskAvailable: true,
       lockTaskActive: active,
       isDeviceOwner: owner,
       lockState: state,
+      suspended: suspended,
+      canReturn: raw?['canReturn'] == true,
+      isHomeApp: raw?['isHomeApp'] == true,
       message: message,
     );
   }
@@ -75,6 +86,16 @@ class KioskStatus {
   /// True when this app manages the tablet as a dedicated kiosk.
   final bool isDeviceOwner;
   final KioskLockState lockState;
+
+  /// The admin used Exit kiosk mode and has not returned to the kiosk yet.
+  final bool suspended;
+
+  /// Normal tablet: the app may bring itself back if closed ("Display over
+  /// other apps" is allowed).
+  final bool canReturn;
+
+  /// The app is the tablet's home screen.
+  final bool isHomeApp;
   final String message;
 }
 
@@ -154,24 +175,71 @@ class KioskService {
   /// Screen pinning on a normal tablet; full lock on a dedicated one.
   static Future<KioskStatus> startLockTask() => _call('startLockTask');
 
-  /// Dedicated tablet only: unlock until the app is next opened or the admin
-  /// returns to the kiosk.
+  /// Unlock until the admin returns to the kiosk or the app is reopened after
+  /// being closed. A normal tablet also stops pinning and reopening itself.
   static Future<KioskStatus> exitKioskMode() => _call('exitKioskMode');
 
-  /// Dedicated tablet only: lock again after [exitKioskMode]. Does nothing on
-  /// a normal tablet.
+  /// Lock again after [exitKioskMode].
   static Future<KioskStatus> resumeKioskMode() => _call('resumeKioskMode');
+
+  /// Tablet settings is showing (true) or closed (false). While it shows,
+  /// the app does not pin itself underneath the admin.
+  static Future<void> setAdminOpen(bool open) async {
+    if (!isAndroid()) return;
+    try {
+      await channel.invokeMethod<void>('setAdminOpen', {'open': open});
+    } catch (_) {}
+  }
+
+  /// Runs [body] while another app is expected on screen (the camera), so the
+  /// kiosk neither reopens itself over it nor pins itself. With [unpin], a
+  /// normal tablet is unpinned for it (pinning would block the other app) and
+  /// pinned again afterwards.
+  static Future<T> duringExternalActivity<T>(
+    Future<T> Function() body, {
+    bool unpin = false,
+  }) async {
+    await _invoke('beginExternalActivity', {'unpin': unpin});
+    try {
+      return await body();
+    } finally {
+      await _invoke('endExternalActivity');
+    }
+  }
+
+  /// Normal tablet: opens Android's "Display over other apps" page for this
+  /// app, so the kiosk can reopen itself if closed.
+  static Future<KioskStatus> openReturnPermission() =>
+      _call('openOverlaySettings');
+
+  /// Normal tablet: offers the kiosk as the home screen (true) or stops
+  /// offering it (false), then opens Android's home app choice.
+  static Future<KioskStatus> setHomeApp(bool enabled) =>
+      _call('setHomeApp', {'enabled': enabled});
+
+  static Future<bool> isHomeApp() async {
+    if (!isAndroid()) return false;
+    try {
+      return await channel.invokeMethod<bool>('isHomeApp') ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  static Future<void> _invoke(String method, [Object? arguments]) async {
+    if (!isAndroid()) return;
+    try {
+      await channel.invokeMethod<void>(method, arguments);
+    } catch (_) {}
+  }
 
   /// Dedicated tablet only: unlock and stop managing the tablet for good.
   static Future<KioskStatus> releaseDeviceOwner() =>
       _call('releaseDeviceOwner');
 
-  static Future<KioskStatus> _call(String method) async {
+  static Future<KioskStatus> _call(String method, [Object? arguments]) async {
     await applySoftKiosk();
-    if (!isAndroid()) return status();
-    try {
-      await channel.invokeMethod<void>(method);
-    } catch (_) {}
+    await _invoke(method, arguments);
     return status();
   }
 }
