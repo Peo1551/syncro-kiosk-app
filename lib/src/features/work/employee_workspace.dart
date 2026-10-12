@@ -11,6 +11,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
+import '../../core/format.dart';
 import '../../core/http/api_client.dart';
 import '../../core/session.dart';
 import '../../core/widgets/app_modal.dart';
@@ -36,6 +37,7 @@ part 'views/request_leave_view.dart';
 part 'views/leave_lists_view.dart';
 part 'views/entitlement_view.dart';
 part 'views/clocking_hub_view.dart';
+part 'views/home_view.dart';
 
 enum _HistoryFilter { all, pending, approved, rejected }
 
@@ -1130,183 +1132,8 @@ class EmployeeWorkspaceState extends State<EmployeeWorkspace> {
 
   // ------------------------------------------------------------------ home
 
-  _TileInfo _tileFor(KioskFeature feature) {
-    final requestedRows = _leaveRequests
-        .where((request) => request.isRequested)
-        .toList();
-    final pendingCount = requestedRows.where(_isPendingRequest).length;
-    final approvedCount = requestedRows.where(_isApprovedRequest).length;
-    final rejectedCount = requestedRows.where(_isRejectedRequest).length;
-    final upcomingCount = _upcomingLeaveRows().length;
-    final entitlementBalance = _entitlementLoading
-        ? 'Loading...'
-        : _leaveEntitlement?.balanceLabel ?? 'Unavailable';
-    switch (feature) {
-      case KioskFeature.requestLeave:
-        return _TileInfo(
-          icon: Icons.beach_access_outlined,
-          title: 'Request Leave',
-          subtitle: pendingCount > 0
-              ? 'Submit a new leave request. $pendingCount pending ${pendingCount == 1 ? 'request is' : 'requests are'} waiting.'
-              : 'Submit a new leave request.',
-        );
-      case KioskFeature.requestHistory:
-        return _TileInfo(
-          icon: Icons.assignment_outlined,
-          title: 'Request History',
-          subtitle:
-              'Pending: $pendingCount. Approved: $approvedCount. Rejected: $rejectedCount.',
-        );
-      case KioskFeature.upcomingLeave:
-        return _TileInfo(
-          icon: Icons.event_available_outlined,
-          title: 'Upcoming Leave',
-          subtitle: upcomingCount > 0
-              ? '$upcomingCount ${upcomingCount == 1 ? 'booking' : 'bookings'} in the next 12 months.'
-              : 'See upcoming leave for the next 12 months.',
-        );
-      case KioskFeature.myEntitlement:
-        return _TileInfo(
-          icon: Icons.insights_outlined,
-          title: 'My Entitlement',
-          subtitle: _entitlementLoading
-              ? 'Loading entitlement summary...'
-              : 'Current balance: $entitlementBalance.',
-        );
-      case KioskFeature.myClockingHub:
-        return const _TileInfo(
-          icon: Icons.schedule_outlined,
-          title: 'My Clocking Hub',
-          subtitle: 'Your clocking records and hours.',
-        );
-      case KioskFeature.myFlexi:
-        final balance = _flexiSummary?.balance;
-        return _TileInfo(
-          icon: Icons.timelapse_outlined,
-          title: 'My Flexi',
-          subtitle: balance == null
-              ? 'Your Flexi balance.'
-              : 'Balance: ${balance.text}.',
-        );
-    }
-  }
-
   @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final tiles = features;
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final columns = constraints.maxWidth >= 900 ? 3 : 2;
-        return ListView(
-          padding: const EdgeInsets.fromLTRB(28, 24, 28, 28),
-          children: [
-            Text(
-              'What would you like to do?',
-              style: theme.textTheme.titleLarge,
-            ),
-            const SizedBox(height: 16),
-            GridView.count(
-              crossAxisCount: columns,
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              mainAxisSpacing: 16,
-              crossAxisSpacing: 16,
-              childAspectRatio: 2.3,
-              children: [
-                for (final feature in tiles)
-                  _FeatureTile(
-                    key: Key('tile-${feature.name}'),
-                    info: _tileFor(feature),
-                    onTap: () => openFeature(feature),
-                  ),
-              ],
-            ),
-          ],
-        );
-      },
-    );
-  }
-}
-
-class _TileInfo {
-  const _TileInfo({
-    required this.icon,
-    required this.title,
-    required this.subtitle,
-  });
-
-  final IconData icon;
-  final String title;
-  final String subtitle;
-}
-
-class _FeatureTile extends StatelessWidget {
-  const _FeatureTile({super.key, required this.info, required this.onTap});
-
-  final _TileInfo info;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Material(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(22),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(22),
-        onTap: onTap,
-        child: Ink(
-          padding: const EdgeInsets.all(18),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(22),
-            border: Border.all(color: const Color(0xFFE6E8EE)),
-          ),
-          child: Row(
-            children: [
-              Container(
-                width: 60,
-                height: 60,
-                decoration: BoxDecoration(
-                  color: const Color(0xFFEAF5DA),
-                  borderRadius: BorderRadius.circular(18),
-                ),
-                child: Icon(
-                  info.icon,
-                  size: 30,
-                  color: const Color(0xFF102F08),
-                ),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      info.title,
-                      style: theme.textTheme.titleMedium?.copyWith(
-                        fontSize: 20,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      info.subtitle,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.bodySmall,
-                    ),
-                  ],
-                ),
-              ),
-              const Icon(Icons.chevron_right, size: 30),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
+  Widget build(BuildContext context) => _homeView(context);
 }
 
 class _MenuDetailPage extends StatelessWidget {

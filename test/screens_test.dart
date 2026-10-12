@@ -122,7 +122,7 @@ void main() {
     );
     await tester.tap(find.byKey(const Key('page-back')));
     await settle(tester);
-    expect(find.text('What would you like to do?'), findsOneWidget);
+    expect(find.byKey(const Key('home-greeting')), findsOneWidget);
     await finish(tester, c);
   });
 
