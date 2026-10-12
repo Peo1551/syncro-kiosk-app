@@ -1,7 +1,7 @@
 name: syncro_kiosk
 description: "Syncro Kiosk: shared employee self-service tablet for Syncro Connect."
 publish_to: 'none'
-version: 1.0.0+1
+version: 1.0.1+2
 
 environment:
   sdk: ^3.11.4
