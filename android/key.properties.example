@@ -1,0 +1,7 @@
+# Copy this file to android/key.properties and replace every placeholder value.
+# Keep android/key.properties and the keystore out of the repository.
+
+storeFile=/absolute/path/to/syncro-kiosk-upload.jks
+storePassword=REPLACE_WITH_STORE_PASSWORD
+keyAlias=upload
+keyPassword=REPLACE_WITH_KEY_PASSWORD

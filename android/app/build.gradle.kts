@@ -1,7 +1,33 @@
+import org.gradle.api.GradleException
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
+}
+
+// Release signing reads android/key.properties (never committed), which points
+// at the upload keystore kept outside the repository.
+val releaseSigningProperties = Properties()
+val releaseSigningPropertiesFile = rootProject.file("key.properties")
+val hasReleaseSigning =
+    if (releaseSigningPropertiesFile.exists()) {
+        releaseSigningPropertiesFile.inputStream().use(releaseSigningProperties::load)
+        true
+    } else {
+        false
+    }
+
+val isReleaseTask =
+    gradle.startParameter.taskNames.any { taskName ->
+        taskName.contains("Release", ignoreCase = true)
+    }
+
+if (!hasReleaseSigning && isReleaseTask) {
+    throw GradleException(
+        "Release signing is not configured. Copy android/key.properties.example to android/key.properties and point it at the upload keystore.",
+    )
 }
 
 android {
@@ -28,8 +54,24 @@ android {
         versionName = flutter.versionName
     }
 
-    // Release signing is deliberately not configured in this repository.
-    // Release keystores live outside source control.
+    signingConfigs {
+        if (hasReleaseSigning) {
+            create("release") {
+                storeFile = file(releaseSigningProperties.getProperty("storeFile"))
+                storePassword = releaseSigningProperties.getProperty("storePassword")
+                keyAlias = releaseSigningProperties.getProperty("keyAlias")
+                keyPassword = releaseSigningProperties.getProperty("keyPassword")
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            if (hasReleaseSigning) {
+                signingConfig = signingConfigs.getByName("release")
+            }
+        }
+    }
 }
 
 kotlin {
