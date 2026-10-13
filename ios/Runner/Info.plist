@@ -67,5 +67,9 @@
 	<true/>
 	<key>NSCameraUsageDescription</key>
 	<string>Take a photo to attach to a leave request.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Choose a photo to attach to a leave request.</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 </dict>
 </plist>
